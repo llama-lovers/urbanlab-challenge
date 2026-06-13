@@ -153,20 +153,15 @@ class DocumentProcessor:
 
 class EmbeddingService:
     def __init__(self) -> None:
-        self._model: Any | None = None
         self._load_warning: str | None = None
 
     @property
     def model_name(self) -> str:
-        return settings.embedding_model if self._sentence_model_available else "hashing-fallback"
+        return settings.embedding_model if settings.embedding_service_url else "hashing-fallback"
 
     @property
     def dimension(self) -> int:
         return settings.embedding_dimension
-
-    @property
-    def _sentence_model_available(self) -> bool:
-        return self._get_model() is not None
 
     def embed_chunks(
         self,
@@ -208,26 +203,20 @@ class EmbeddingService:
         return [chunk], warnings
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        model = self._get_model()
-        if model is not None:
-            embeddings = model.encode(texts, normalize_embeddings=True)
-            return [self._to_float_list(vector) for vector in embeddings]
+        if settings.embedding_service_url:
+            try:
+                with httpx.Client(timeout=60) as client:
+                    response = client.post(
+                        f"{settings.embedding_service_url.rstrip('/')}/embed",
+                        json={"texts": texts, "normalize": True},
+                    )
+                    response.raise_for_status()
+                self._load_warning = None
+                return response.json()["embeddings"]
+            except Exception as exc:  # pragma: no cover - depends on model service availability
+                self._load_warning = f"Embedding service unavailable, using hashing fallback: {exc}"
+
         return [self._hash_embedding(text) for text in texts]
-
-    def _get_model(self) -> Any | None:
-        if self._model is not None:
-            return self._model
-        if self._load_warning is not None:
-            return None
-
-        try:
-            from sentence_transformers import SentenceTransformer
-
-            self._model = SentenceTransformer(settings.embedding_model)
-            return self._model
-        except Exception as exc:  # pragma: no cover - depends on optional model download
-            self._load_warning = f"Embedding model unavailable, using hashing fallback: {exc}"
-            return None
 
     def _chunk_text(self, text: str, chunk_size: int, overlap: int) -> list[str]:
         normalized = " ".join(text.split())
@@ -263,10 +252,6 @@ class EmbeddingService:
         norm = math.sqrt(sum(value * value for value in vector)) or 1.0
         return [value / norm for value in vector]
 
-    def _to_float_list(self, vector: Any) -> list[float]:
-        values = vector.tolist() if hasattr(vector, "tolist") else list(vector)
-        return [float(value) for value in values]
-
     def _document_title(self, filename: str, document_text: str) -> str:
         filename_title = self._filename_title(filename)
         heading = self._first_heading(document_text)
@@ -297,23 +282,33 @@ class EmbeddingService:
 
 class RerankerService:
     def __init__(self) -> None:
-        self._model: Any | None = None
         self._load_warning: str | None = None
 
     @property
     def model_name(self) -> str:
-        return settings.reranker_model if settings.reranker_enabled else "disabled"
+        return settings.reranker_model if settings.reranker_enabled and settings.reranker_service_url else "disabled"
 
     @property
     def warning(self) -> str | None:
         return self._load_warning
 
     def rerank(self, question: str, matches: list[SearchMatch], top_k: int) -> list[SearchMatch]:
-        model = self._get_model()
-        if model is None or not matches:
+        if not settings.reranker_enabled or not settings.reranker_service_url or not matches:
             return matches[:top_k]
 
-        scores = model.predict([(question, match.text) for match in matches])
+        try:
+            with httpx.Client(timeout=120) as client:
+                response = client.post(
+                    f"{settings.reranker_service_url.rstrip('/')}/rerank",
+                    json={"pairs": [{"query": question, "text": match.text} for match in matches]},
+                )
+                response.raise_for_status()
+            scores = response.json()["scores"]
+            self._load_warning = None
+        except Exception as exc:  # pragma: no cover - depends on model service availability
+            self._load_warning = f"Reranker service unavailable, using embedding similarity order: {exc}"
+            return matches[:top_k]
+
         scored_matches = [
             SearchMatch(
                 id=match.id,
@@ -325,23 +320,6 @@ class RerankerService:
         ]
         scored_matches.sort(key=lambda match: match.score, reverse=True)
         return scored_matches[:top_k]
-
-    def _get_model(self) -> Any | None:
-        if not settings.reranker_enabled:
-            return None
-        if self._model is not None:
-            return self._model
-        if self._load_warning is not None:
-            return None
-
-        try:
-            from sentence_transformers import CrossEncoder
-
-            self._model = CrossEncoder(settings.reranker_model, max_length=8192)
-            return self._model
-        except Exception as exc:  # pragma: no cover - depends on optional model download
-            self._load_warning = f"Reranker unavailable, using embedding similarity order: {exc}"
-            return None
 
 
 class InMemoryRagStore:
@@ -455,7 +433,7 @@ class VisionLLMService:
             return VisionResult(
                 answer=(
                     "Local VisionLLM is not running. Start Ollama locally and pull a vision model, "
-                    "for example: ollama pull llava:7b."
+                    f"for example: ollama pull {settings.vision_llm_model}."
                 ),
                 model=settings.vision_llm_model,
                 warnings=[*warnings, "Ollama is not reachable"],

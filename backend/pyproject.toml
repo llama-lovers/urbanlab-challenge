@@ -14,7 +14,6 @@ dependencies = [
     "pdf2image>=1.17",
     "pypdf>=5.0",
     "pytesseract>=0.3.13",
-    "sentence-transformers>=3.0",
     "pyjwt>=2.8",
     "bcrypt>=4.0",
     "slowapi>=0.1.9",
