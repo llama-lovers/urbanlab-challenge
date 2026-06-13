@@ -57,7 +57,17 @@ class Settings(BaseSettings):
     qdrant_collection: str = "urbanlab"
 
     # RAG-augmented chat
-    rag_top_k: int = 5
+    rag_top_k: int = 6
+    # Relevance gates — below these, the retrieval is treated as "no match" so no
+    # context is injected and no sources are emitted (fixes sources on off-topic questions).
+    # rag_min_retrieval_score: cosine similarity gate applied by Qdrant at retrieval time.
+    # rag_min_rerank_score: optional cross-encoder gate applied after reranking; 0.0 = off
+    #   until the score distribution of the reranker service is known (watch the logs to tune).
+    rag_min_retrieval_score: float = 0.35
+    rag_min_rerank_score: float = 0.0
+    # How many recent user turns to fold into the retrieval query so follow-up
+    # questions ("a ile to kosztuje?") search against the real topic, not just themselves.
+    rag_query_context_turns: int = 3
     system_prompt: str = (
         "Jesteś pomocnym asystentem UrbanLab Lublin — pomagasz mieszkańcom Lublina "
         "załatwiać sprawy urzędowe. "

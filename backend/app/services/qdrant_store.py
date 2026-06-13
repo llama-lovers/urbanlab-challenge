@@ -8,6 +8,7 @@ Expected payload per point (set by the pipeline or the assistant indexing endpoi
     title       str  — page or document title (optional)
     chunk_index int  — position within the source document (optional)
 """
+
 from __future__ import annotations
 
 import logging
@@ -54,7 +55,11 @@ class QdrantRagStore:
 
     def _get_client(self) -> AsyncQdrantClient:
         if self._client is None:
-            logger.info("Connecting to Qdrant at %s, collection=%s", settings.qdrant_url, settings.qdrant_collection)
+            logger.info(
+                "Connecting to Qdrant at %s, collection=%s",
+                settings.qdrant_url,
+                settings.qdrant_collection,
+            )
             self._client = AsyncQdrantClient(
                 url=settings.qdrant_url,
                 api_key=settings.qdrant_api_key or None,
@@ -118,7 +123,9 @@ class QdrantRagStore:
 
         logger.debug(
             "Querying Qdrant collection=%s limit=%d filter=%s",
-            settings.qdrant_collection, candidate_limit, source_id,
+            settings.qdrant_collection,
+            candidate_limit,
+            source_id,
         )
         try:
             response = await client.query_points(
@@ -127,12 +134,23 @@ class QdrantRagStore:
                 limit=candidate_limit,
                 query_filter=query_filter,
                 with_payload=True,
+                score_threshold=settings.rag_min_retrieval_score or None,
             )
         except Exception as exc:
-            logger.error("Qdrant search failed (collection=%s url=%s): %s", settings.qdrant_collection, settings.qdrant_url, exc)
+            logger.error(
+                "Qdrant search failed (collection=%s url=%s): %s",
+                settings.qdrant_collection,
+                settings.qdrant_url,
+                exc,
+            )
             return [], [f"Qdrant search failed: {exc}"]
 
-        logger.info("Qdrant returned %d candidates for query %.60r", len(response.points), question)
+        logger.info(
+            "Qdrant returned %d candidates (min_score=%.3f) for query %.60r",
+            len(response.points),
+            settings.rag_min_retrieval_score,
+            question,
+        )
 
         matches = [
             SearchMatch(
@@ -145,12 +163,28 @@ class QdrantRagStore:
         ]
 
         warnings: list[str] = []
+        reranked = False
         if self._reranker_service and matches:
             matches = self._reranker_service.rerank(question, matches, top_k=top_k)
             if self._reranker_service.warning:
                 warnings.append(self._reranker_service.warning)
+            else:
+                reranked = True
         else:
             matches = matches[:top_k]
+
+        # Optional relevance gate on the cross-encoder score. Only meaningful when the
+        # reranker actually ran (otherwise `.score` is the cosine, already gated by Qdrant).
+        if reranked and settings.rag_min_rerank_score > 0 and matches:
+            before = len(matches)
+            matches = [m for m in matches if m.score >= settings.rag_min_rerank_score]
+            if len(matches) != before:
+                logger.info(
+                    "Reranker gate dropped %d/%d matches below %.3f",
+                    before - len(matches),
+                    before,
+                    settings.rag_min_rerank_score,
+                )
 
         logger.info("RAG search done: %d matches after rerank/trim (top_k=%d)", len(matches), top_k)
         if matches:
