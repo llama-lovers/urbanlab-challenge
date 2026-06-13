@@ -7,6 +7,7 @@ import {
   useLocalRuntime,
 } from "@assistant-ui/react";
 import { UrbanLabAdapter } from "@/lib/chat-adapter";
+import { WhisperDictationAdapter } from "@/lib/dictation-adapter";
 import { AuthProvider, AuthControls } from "@/components/auth/auth-gate";
 import { Thread } from "@/components/assistant-ui/thread";
 import {
@@ -34,7 +35,10 @@ export const Assistant = () => {
 const Chat = () => {
   const adapter = useMemo(() => new UrbanLabAdapter(), []);
   const attachments = useMemo(() => new SimpleImageAttachmentAdapter(), []);
-  const runtime = useLocalRuntime(adapter, { adapters: { attachments } });
+  const dictation = useMemo(() => new WhisperDictationAdapter(), []);
+  const runtime = useLocalRuntime(adapter, {
+    adapters: { attachments, dictation },
+  });
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>

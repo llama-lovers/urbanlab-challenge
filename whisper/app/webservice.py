@@ -1,6 +1,7 @@
 from app.tools.transcribe_tools import Model
 
 from fastapi import FastAPI, File, UploadFile, Response, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 import shutil
 import torch
@@ -12,6 +13,15 @@ base_dir = Path(".")
 model = Model(os.getenv("WHISPER_MODEL"), "nvidia/diar_streaming_sortformer_4spk-v2.1")
 model.load_models()
 app = FastAPI()
+
+# Allow the browser frontend to POST recordings directly to /asr.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
 
 def del_garbage():
     for item in base_dir.iterdir():

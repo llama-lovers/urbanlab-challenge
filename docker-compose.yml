@@ -183,22 +183,23 @@ services:
     profiles:
       - pipeline
 
-  # use api with cpu
+  # Whisper speech-to-text (CPU). The browser posts recordings to /asr.
   whisper:
     container_name: whisper
     image: janusz_whisper
     build:
-      context: .
+      context: ./whisper
       args:
-        USE_CUDA: false   
+        USE_CUDA: "false"
     ports:
-      - "${PORT}:8000"
+      - '${WHISPER_PORT:-9000}:8000'
     volumes:
-      - ./app:/app/app
+      - ./whisper/app:/app/app
     environment:
-    - USE_CUDA=false   
-    env_file:
-      - .env      
+      USE_CUDA: "false"
+      WHISPER_MODEL: ${WHISPER_MODEL:-medium}
+      LANGUAGE: ${LANGUAGE:-pl}
+    restart: unless-stopped
     command: python -m uvicorn app.webservice:app --host 0.0.0.0 --port 8000 --reload
 
 volumes:

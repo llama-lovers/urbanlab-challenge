@@ -5,6 +5,10 @@
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+// Whisper speech-to-text service (POST /asr -> { text, segments }).
+export const WHISPER_URL =
+  process.env.NEXT_PUBLIC_WHISPER_URL ?? "http://10.8.47.10:9000";
+
 const TOKEN_KEY = "urbanlab_token";
 
 export const getToken = (): string | null =>
@@ -87,4 +91,16 @@ export async function sendMessage(
   });
   if (!res.ok || !res.body) throw await asError(res, `Request failed (${res.status})`);
   return res;
+}
+
+// ---- speech-to-text ----
+
+/** Send a recorded audio blob to Whisper and return the transcript text. */
+export async function transcribeAudio(audio: Blob): Promise<string> {
+  const form = new FormData();
+  form.append("audio_file", audio, "recording.webm");
+  const res = await fetch(`${WHISPER_URL}/asr`, { method: "POST", body: form });
+  if (!res.ok) throw await asError(res, `Transcription failed (${res.status})`);
+  const data = (await res.json()) as { text?: string };
+  return data.text ?? "";
 }
