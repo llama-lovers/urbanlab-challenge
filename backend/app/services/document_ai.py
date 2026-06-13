@@ -421,18 +421,79 @@ class InMemoryRagStore:
 
 class VisionLLMService:
     async def analyze(self, content: bytes, filename: str, content_type: str | None, prompt: str) -> VisionResult:
-        if not settings.vision_llm_base_url or not settings.vision_llm_api_key:
+        image_content, mime_type, warnings = self._prepare_image_input(content, filename, content_type)
+
+        if settings.vision_llm_provider == "ollama":
+            return await self._analyze_with_ollama(image_content, prompt, warnings)
+
+        return await self._analyze_with_openai_compatible(image_content, mime_type, prompt, warnings)
+
+    async def _analyze_with_ollama(
+        self,
+        image_content: bytes,
+        prompt: str,
+        warnings: list[str],
+    ) -> VisionResult:
+        base_url = settings.vision_llm_base_url or "http://host.docker.internal:11434"
+        payload = {
+            "model": settings.vision_llm_model,
+            "stream": False,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt,
+                    "images": [base64.b64encode(image_content).decode("ascii")],
+                }
+            ],
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                response = await client.post(f"{base_url.rstrip('/')}/api/chat", json=payload)
+                response.raise_for_status()
+        except httpx.ConnectError:
             return VisionResult(
                 answer=(
-                    "VisionLLM is not configured. Set VISION_LLM_BASE_URL and VISION_LLM_API_KEY "
+                    "Local VisionLLM is not running. Start Ollama locally and pull a vision model, "
+                    "for example: ollama pull llava:7b."
+                ),
+                model=settings.vision_llm_model,
+                warnings=[*warnings, "Ollama is not reachable"],
+            )
+        except httpx.HTTPStatusError as exc:
+            return VisionResult(
+                answer=f"Ollama returned an error: {exc.response.text}",
+                model=settings.vision_llm_model,
+                warnings=[*warnings, f"Ollama request failed with HTTP {exc.response.status_code}"],
+            )
+
+        data = response.json()
+        return VisionResult(
+            answer=data.get("message", {}).get("content", ""),
+            model=settings.vision_llm_model,
+            warnings=warnings,
+        )
+
+    async def _analyze_with_openai_compatible(
+        self,
+        image_content: bytes,
+        mime_type: str,
+        prompt: str,
+        warnings: list[str],
+    ) -> VisionResult:
+        api_key = settings.resolved_vision_llm_api_key
+        base_url = settings.vision_llm_base_url or "https://api.openai.com/v1"
+        if not api_key:
+            return VisionResult(
+                answer=(
+                    "VisionLLM is not configured. Set OPENAI_API_KEY or VISION_LLM_API_KEY "
                     "to enable multimodal document analysis."
                 ),
                 model=settings.vision_llm_model,
-                warnings=["VisionLLM provider is not configured"],
+                warnings=["VisionLLM API key is not configured"],
             )
 
-        mime_type = content_type or self._guess_mime_type(filename)
-        image_url = f"data:{mime_type};base64,{base64.b64encode(content).decode('ascii')}"
+        image_url = f"data:{mime_type};base64,{base64.b64encode(image_content).decode('ascii')}"
         payload = {
             "model": settings.vision_llm_model,
             "messages": [
@@ -445,19 +506,49 @@ class VisionLLMService:
                 }
             ],
         }
-        headers = {"Authorization": f"Bearer {settings.vision_llm_api_key}"}
+        headers = {"Authorization": f"Bearer {api_key}"}
 
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
-                f"{settings.vision_llm_base_url.rstrip('/')}/chat/completions",
+                f"{base_url.rstrip('/')}/chat/completions",
                 headers=headers,
                 json=payload,
             )
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                return VisionResult(
+                    answer=f"VisionLLM provider returned an error: {exc.response.text}",
+                    model=settings.vision_llm_model,
+                    warnings=[*warnings, f"VisionLLM request failed with HTTP {exc.response.status_code}"],
+                )
 
         data = response.json()
         answer = data["choices"][0]["message"]["content"]
-        return VisionResult(answer=answer, model=settings.vision_llm_model, warnings=[])
+        return VisionResult(answer=answer, model=settings.vision_llm_model, warnings=warnings)
+
+    def _prepare_image_input(
+        self,
+        content: bytes,
+        filename: str,
+        content_type: str | None,
+    ) -> tuple[bytes, str, list[str]]:
+        suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if content_type == "application/pdf" or suffix == "pdf":
+            try:
+                from pdf2image import convert_from_bytes
+
+                images = convert_from_bytes(content, first_page=1, last_page=1)
+                if not images:
+                    return content, "application/pdf", ["PDF preview conversion returned no pages"]
+                output = io.BytesIO()
+                images[0].convert("RGB").save(output, format="JPEG", quality=90)
+                return output.getvalue(), "image/jpeg", ["PDF was converted to first-page image for VisionLLM"]
+            except Exception as exc:  # pragma: no cover - depends on system poppler
+                return content, "application/pdf", [f"PDF preview conversion failed: {exc}"]
+
+        mime_type = content_type or self._guess_mime_type(filename)
+        return content, mime_type, []
 
     def _guess_mime_type(self, filename: str) -> str:
         suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
