@@ -140,13 +140,14 @@ async def send_message(
     except Exception:
         rag_context, rag_sources = "", []
 
+    system_content = settings.system_prompt
     if rag_context:
-        augmented_messages: list[dict] = [
-            {"role": "system", "content": settings.rag_system_prompt.format(context=rag_context)},
-            *messages_for_model,
-        ]
-    else:
-        augmented_messages = messages_for_model
+        system_content += "\n\n" + settings.rag_system_prompt.format(context=rag_context)
+
+    augmented_messages: list[dict] = [
+        {"role": "system", "content": system_content},
+        *messages_for_model,
+    ]
 
     model_client = get_model_client()
 
