@@ -107,7 +107,7 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
 
   return (
     <ThreadPrimitive.Root
-      className="aui-root aui-thread-root bg-background @container flex h-full flex-col"
+      className="aui-root aui-thread-root @container flex h-full flex-col"
       style={{
         ["--thread-max-width" as string]: "44rem",
         ["--composer-padding" as string]: "8px",
@@ -116,7 +116,7 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
       <ThreadPrimitive.Viewport
         turnAnchor="top"
         data-slot="aui_thread-viewport"
-        className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth"
+        className="relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll"
       >
         <div
           className={cn(
@@ -139,8 +139,8 @@ const ThreadRoot: FC<{ isEmpty: boolean }> = ({ isEmpty }) => {
 
           <ThreadPrimitive.ViewportFooter
             className={cn(
-              "aui-thread-viewport-footer bg-background flex flex-col gap-4 overflow-visible pb-4 md:pb-6",
-              !isEmpty && "sticky bottom-0 mt-auto rounded-t-xl",
+              "aui-thread-viewport-footer flex flex-col gap-4 overflow-visible pb-4 md:pb-6",
+              !isEmpty && "sticky bottom-0 mt-auto rounded-t-2xl backdrop-blur-xl bg-white/[0.03] border-t border-white/[0.06]",
             )}
           >
             <ThreadScrollToBottom />
@@ -182,14 +182,23 @@ const ThreadScrollToBottom: FC = () => {
 
 const ThreadWelcome: FC = () => {
   return (
-    <div className="aui-thread-welcome-root mb-6 flex flex-col items-center gap-2 px-4 text-center">
-      <h1 className="aui-thread-welcome-message-inner fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-2xl font-semibold duration-200">
-        Asystent UrbanLab Lublin
-      </h1>
-      <p className="text-muted-foreground fade-in slide-in-from-bottom-1 animate-in fill-mode-both max-w-md text-sm duration-200">
-        Zapytaj o usługi urzędu, władze miasta i strukturę organizacyjną — odpowiem
-        na podstawie Biuletynu Informacji Publicznej Lublina.
-      </p>
+    <div className="aui-thread-welcome-root mb-8 flex flex-col items-center px-4 text-center">
+      <div className="fade-in slide-in-from-bottom-2 animate-in fill-mode-both duration-300 w-full max-w-md rounded-2xl border border-white/10 bg-white/5 px-8 py-10 shadow-[0_8px_40px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-xl">
+        <div className="mb-4 flex justify-center">
+          <div className="flex size-12 items-center justify-center rounded-xl bg-primary/20 text-primary shadow-[0_0_20px_rgba(0,120,255,0.3)] ring-1 ring-primary/30">
+            <svg viewBox="0 0 24 24" fill="none" className="size-6" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21L21 12 2.25 3v7.5l13.5 1.5-13.5 1.5V21z" />
+            </svg>
+          </div>
+        </div>
+        <h1 className="mb-2 bg-gradient-to-b from-white to-white/70 bg-clip-text text-2xl font-semibold text-transparent">
+          Asystent UrbanLab Lublin
+        </h1>
+        <p className="text-muted-foreground text-sm leading-relaxed">
+          Zapytaj o usługi urzędu, władze miasta i strukturę organizacyjną — odpowiem
+          na podstawie Biuletynu Informacji Publicznej Lublina.
+        </p>
+      </div>
     </div>
   );
 };
@@ -213,7 +222,7 @@ const ThreadSuggestions: FC = () => {
           <ThreadPrimitive.Suggestion prompt={prompt} send asChild>
             <Button
               variant="ghost"
-              className="aui-thread-welcome-suggestion text-foreground hover:bg-muted border-border/60 h-auto gap-1.5 rounded-full border px-3.5 py-1.5 text-sm font-normal whitespace-nowrap transition-colors"
+              className="aui-thread-welcome-suggestion text-foreground/80 hover:text-foreground border-white/10 hover:border-white/20 h-auto gap-1.5 rounded-full border bg-white/5 px-3.5 py-1.5 text-sm font-normal whitespace-nowrap backdrop-blur-md transition-all hover:bg-white/10 hover:shadow-[0_0_12px_rgba(100,140,255,0.15)]"
             >
               {prompt}
             </Button>
@@ -229,7 +238,7 @@ const Composer: FC = () => {
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
       <div
         data-slot="aui_composer-shell"
-        className="bg-background border-border/60 focus-within:border-border dark:border-muted-foreground/15 dark:bg-muted/30 dark:focus-within:border-muted-foreground/30 flex w-full flex-col gap-2 rounded-3xl border p-(--composer-padding) shadow-[0_4px_16px_-8px_rgba(0,0,0,0.08),0_1px_2px_rgba(0,0,0,0.04)] transition-[border-color,box-shadow] focus-within:shadow-[0_6px_24px_-8px_rgba(0,0,0,0.12),0_1px_2px_rgba(0,0,0,0.05)] dark:shadow-none"
+        className="flex w-full flex-col gap-2 rounded-3xl border border-white/10 bg-white/6 p-(--composer-padding) shadow-[0_4px_24px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-xl transition-[border-color,box-shadow] focus-within:border-white/20 focus-within:shadow-[0_6px_36px_rgba(0,0,0,0.45),0_0_0_1px_rgba(100,140,255,0.15),inset_0_1px_0_rgba(255,255,255,0.10)]"
       >
         <ComposerAttachments />
         <ComposerPrimitive.Input
@@ -346,8 +355,7 @@ const AssistantMessage: FC = () => {
     >
       <div
         data-slot="aui_assistant-message-content"
-        // [contain-intrinsic-size:auto_24px] fixes issue #4104, don't change without checking for regressions
-        className="text-foreground px-2 leading-relaxed wrap-break-word [contain-intrinsic-size:auto_24px] [content-visibility:auto]"
+        className="text-foreground px-2 leading-relaxed wrap-break-word"
       >
         <MessagePrimitive.GroupedParts
           groupBy={groupPartByType({
@@ -485,7 +493,7 @@ const UserMessage: FC = () => {
       <UserMessageAttachments />
 
       <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0">
-        <div className="aui-user-message-content peer bg-muted text-foreground rounded-xl px-4 py-2 wrap-break-word empty:hidden">
+        <div className="aui-user-message-content peer rounded-xl border border-white/10 bg-white/8 px-4 py-2 text-foreground shadow-[0_2px_12px_rgba(0,0,0,0.25)] backdrop-blur-sm wrap-break-word empty:hidden">
           <MessagePrimitive.Parts />
         </div>
         <div className="aui-user-action-bar-wrapper absolute start-0 top-1/2 -translate-x-full -translate-y-1/2 pe-2 peer-empty:hidden rtl:translate-x-full">

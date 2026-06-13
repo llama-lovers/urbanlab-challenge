@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "UrbanLab Document Assistant",
-  description: "Ask questions about your documents, powered by a local Ollama model",
+  title: "Asystent UrbanLab Lublin",
+  description: "Zadaj pytanie o usługi urzędu, władze miasta i strukturę organizacyjną Lublina.",
 };
 
 export default function RootLayout({
@@ -24,7 +24,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="pl" className="dark">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
