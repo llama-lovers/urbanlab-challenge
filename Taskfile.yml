@@ -43,6 +43,11 @@ tasks:
     cmds:
       - xdg-open http://localhost:8888 2>/dev/null || open http://localhost:8888 2>/dev/null || echo "Open http://localhost:8888 (token= hackathon)"
 
+  openapi:
+    desc: Export OpenAPI schema to backend/openapi.json (no Postgres needed)
+    cmds:
+      - cd backend && uv run python scripts/export_openapi.py
+
   clean:
     desc: Remove all containers and volumes (DESTRUCTIVE — deletes all data)
     prompt: This will delete all Docker volumes and data. Continue?

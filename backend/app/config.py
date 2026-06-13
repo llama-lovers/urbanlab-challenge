@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     vision_llm_api_key: str | None = None
     vision_llm_model: str = "gpt-4o-mini"
 
+    # Model service — leave empty to use the built-in mock client
+    model_service_url: str = ""
+    model_service_api_key: str = ""
+    model_timeout_s: float = 60.0
+    history_limit: int = 20
+
     @field_validator("debug", mode="before")
     @classmethod
     def parse_debug(cls, value: Any) -> bool:

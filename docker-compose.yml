@@ -23,6 +23,8 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-hackathon}
       DEBUG: ${DEBUG:-false}
+      MODEL_SERVICE_URL: ${MODEL_SERVICE_URL:-}
+      MODEL_SERVICE_API_KEY: ${MODEL_SERVICE_API_KEY:-}
     volumes:
       - ./backend:/app
     depends_on:

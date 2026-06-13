@@ -5,7 +5,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import Base, engine
-from app.routers import assistant, data, geo
+from app.models import chat  # noqa: F401 — registers chat ORM models with Base
+from app.routers import assistant
+from app.routers import chat as chat_router
 
 
 @asynccontextmanager
@@ -16,7 +18,15 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
-app = FastAPI(title="Hackathon API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="Asystent UrbanLab Lublin",
+    version="0.1.0",
+    description=(
+        "Chat orchestration layer for the Lublin AI Assistant — manages sessions, "
+        "messages, and model response streaming."
+    ),
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,9 +35,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(data.router, prefix="/api/data", tags=["data"])
-app.include_router(geo.router, prefix="/api/geo", tags=["geo"])
 app.include_router(assistant.router, prefix="/api/assistant", tags=["assistant"])
+app.include_router(chat_router.router, prefix="/api/chat", tags=["chat"])
 
 
 @app.get("/health")
