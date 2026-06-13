@@ -1,5 +1,5 @@
 import type * as React from "react";
-import { MessagesSquare } from "lucide-react";
+import Image from "next/image";
 import {
   Sidebar,
   SidebarContent,
@@ -22,8 +22,15 @@ export function ThreadListSidebar({
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton size="lg">
-                <div className="aui-sidebar-header-icon-wrapper bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg">
-                  <MessagesSquare className="aui-sidebar-header-icon size-4" />
+                <div className="aui-sidebar-header-icon-wrapper flex aspect-square size-8 items-center justify-center">
+                  <Image
+                    src="/herb-lublin.png"
+                    alt="Herb Lublina"
+                    width={66}
+                    height={97}
+                    className="aui-sidebar-header-icon h-8 w-auto"
+                    priority
+                  />
                 </div>
                 <div className="aui-sidebar-header-heading me-6 flex flex-col gap-0.5 leading-none">
                   <span className="aui-sidebar-header-title font-semibold">
