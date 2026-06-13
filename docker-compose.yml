@@ -183,6 +183,24 @@ services:
     profiles:
       - pipeline
 
+  # use api with cpu
+  whisper:
+    container_name: whisper
+    image: janusz_whisper
+    build:
+      context: .
+      args:
+        USE_CUDA: false   
+    ports:
+      - "${PORT}:8000"
+    volumes:
+      - ./app:/app/app
+    environment:
+    - USE_CUDA=false   
+    env_file:
+      - .env      
+    command: python -m uvicorn app.webservice:app --host 0.0.0.0 --port 8000 --reload
+
 volumes:
   postgres_data:
   qdrant_data:

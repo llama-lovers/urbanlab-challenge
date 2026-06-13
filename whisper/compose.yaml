@@ -1,0 +1,40 @@
+services:
+  
+  # use api with gpu
+  api:
+    container_name: whisper
+    image: janusz_whisper
+    build:
+      context: .
+      args:
+        USE_CUDA: true 
+    ports:
+      - "${PORT}:8000"
+    volumes:
+      - ./app:/app/app
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - USE_CUDA=true  
+    env_file:
+      - .env
+    command: python -m uvicorn app.webservice:app --host 0.0.0.0 --port 8000 --reload
+
+  # use api with cpu
+  # api:
+  #   container_name: whisper
+  #   image: janusz_whisper
+  #   build:
+  #     context: .
+  #     args:
+  #       USE_CUDA: false   
+  #   ports:
+  #     - "${PORT}:8000"
+  #   volumes:
+  #     - ./app:/app/app
+  #   environment:
+  #   - USE_CUDA=false   
+  #   env_file:
+  #     - .env      
+  #   command: python -m uvicorn app.webservice:app --host 0.0.0.0 --port 8000 --reload
