@@ -248,6 +248,46 @@ class OpenAICompatibleModelClient:
                 yield DeltaChunk(text=content)
 
 
+class OllamaChatModelClient:
+    async def stream(
+        self, messages: list[dict], session_id: str
+    ) -> AsyncIterator[ChatChunk]:
+        body = {
+            "model": settings.chat_llm_model,
+            "messages": messages,
+            "stream": True,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=settings.model_timeout_s) as client:
+                async with client.stream(
+                    "POST",
+                    f"{settings.chat_llm_base_url.rstrip('/')}/api/chat",
+                    json=body,
+                ) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            payload = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+
+                        content = payload.get("message", {}).get("content")
+                        if content:
+                            yield DeltaChunk(text=content)
+        except (httpx.ConnectError, httpx.HTTPStatusError):
+            logger.warning("Ollama chat service unavailable; falling back to mock model")
+            async for chunk in MockModelClient().stream(messages, session_id):
+                yield chunk
+
+
+def get_model_client() -> MockModelClient | OpenAICompatibleModelClient | RealModelClient | OllamaChatModelClient:
+    if settings.openrouter_api_key:
+        return OpenAICompatibleModelClient()
+    if settings.chat_llm_provider == "ollama" and settings.chat_llm_base_url:
+        return OllamaChatModelClient()
 def get_model_client() -> MockModelClient | OpenAICompatibleModelClient:
     if settings.openrouter_api_key:
         return OpenAICompatibleModelClient(

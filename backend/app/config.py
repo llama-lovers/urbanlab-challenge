@@ -14,9 +14,11 @@ class Settings(BaseSettings):
     ocr_language: str = "pol+eng"
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     embedding_dimension: int = 384
+    embedding_service_url: str | None = "http://embedding-minilm:8080"
     reranker_model: str = "sdadas/polish-reranker-roberta-v3"
     reranker_enabled: bool = True
     reranker_candidate_multiplier: int = 4
+    reranker_service_url: str | None = "http://reranker-polish-roberta:8080"
     vision_llm_provider: str = "ollama"
     vision_llm_base_url: str | None = "http://host.docker.internal:11434"
     vision_llm_api_key: str | None = None
@@ -31,6 +33,12 @@ class Settings(BaseSettings):
     model_timeout_s: float = 60.0
     history_limit: int = 20
 
+    # Local generative chat model
+    chat_llm_provider: str = "ollama"
+    chat_llm_base_url: str | None = "http://ollama-qwen-chat:11434"
+    chat_llm_model: str = "qwen3.5:4b"
+
+    # OpenRouter / OpenAI-compatible model
     # OpenRouter / OpenAI-compatible cloud model
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
@@ -69,7 +77,15 @@ class Settings(BaseSettings):
             return False
         return value
 
-    @field_validator("vision_llm_base_url", "vision_llm_api_key", "openai_api_key", mode="before")
+    @field_validator(
+        "embedding_service_url",
+        "reranker_service_url",
+        "chat_llm_base_url",
+        "vision_llm_base_url",
+        "vision_llm_api_key",
+        "openai_api_key",
+        mode="before",
+    )
     @classmethod
     def empty_string_to_none(cls, value: Any) -> Any:
         if isinstance(value, str) and not value.strip():
