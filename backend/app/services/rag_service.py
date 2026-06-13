@@ -7,9 +7,13 @@ RagService embeds the user question, searches Qdrant, and returns:
 """
 from __future__ import annotations
 
+import logging
+
 from app.config import settings
 from app.services.document_ai import EmbeddingService, RerankerService
 from app.services.qdrant_store import QdrantRagStore
+
+logger = logging.getLogger(__name__)
 
 
 class RagService:
@@ -26,9 +30,15 @@ class RagService:
         Both are empty when Qdrant has no relevant results or is unreachable.
         """
         k = top_k or settings.rag_top_k
-        matches, _ = await self._store.search(question, top_k=k)
+        logger.info("RAG retrieve: question=%.80r top_k=%d", question, k)
+        matches, warnings = await self._store.search(question, top_k=k)
+
+        if warnings:
+            for w in warnings:
+                logger.warning("RAG warning: %s", w)
 
         if not matches:
+            logger.warning("RAG retrieve: no matches found for question %.80r", question)
             return "", []
 
         parts = []
@@ -37,6 +47,7 @@ class RagService:
             parts.append(f"[{i}] {label}\n{m.text}" if label else f"[{i}]\n{m.text}")
 
         context = "\n\n---\n\n".join(parts)
+        logger.info("RAG context built: %d sources, %d chars", len(matches), len(context))
 
         sources = [
             {

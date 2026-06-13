@@ -139,7 +139,8 @@ async def send_message(
 
     try:
         rag_context, rag_sources = await get_rag_service().retrieve(payload.content)
-    except Exception:
+    except Exception as rag_exc:
+        logger.error("RAG retrieve failed, proceeding without context: %s", rag_exc, exc_info=True)
         rag_context, rag_sources = "", []
 
     system_content = settings.system_prompt
