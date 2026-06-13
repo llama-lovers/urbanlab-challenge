@@ -283,12 +283,7 @@ class OllamaChatModelClient:
                 yield chunk
 
 
-def get_model_client() -> MockModelClient | OpenAICompatibleModelClient | RealModelClient | OllamaChatModelClient:
-    if settings.openrouter_api_key:
-        return OpenAICompatibleModelClient()
-    if settings.chat_llm_provider == "ollama" and settings.chat_llm_base_url:
-        return OllamaChatModelClient()
-def get_model_client() -> MockModelClient | OpenAICompatibleModelClient:
+def get_model_client() -> MockModelClient | OpenAICompatibleModelClient | OllamaChatModelClient:
     if settings.openrouter_api_key:
         return OpenAICompatibleModelClient(
             base_url=settings.openrouter_base_url,
@@ -296,6 +291,8 @@ def get_model_client() -> MockModelClient | OpenAICompatibleModelClient:
             model=settings.openrouter_model,
             send_app_headers=settings.openrouter_send_app_headers,
         )
+    if settings.chat_llm_provider == "ollama" and settings.chat_llm_base_url:
+        return OllamaChatModelClient()
     if settings.model_service_url:
         return OpenAICompatibleModelClient(
             base_url=settings.model_service_url,
