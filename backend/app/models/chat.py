@@ -48,6 +48,11 @@ class ChatMessage(Base):
 # ── Pydantic DTOs ──────────────────────────────────────────────────────────────
 
 
+class ChatRequest(BaseModel):
+    content: str
+    image: str | None = None  # base64 data URL
+
+
 class SessionCreate(BaseModel):
     title: str | None = None
     meta: dict | None = None
