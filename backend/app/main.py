@@ -6,7 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import Base, engine
 from app.models import chat  # noqa: F401 — registers chat ORM models with Base
+from app.models import user  # noqa: F401 — registers user ORM model with Base
 from app.routers import assistant
+from app.routers import auth as auth_router
 from app.routers import chat as chat_router
 
 
@@ -36,6 +38,7 @@ app.add_middleware(
 )
 
 app.include_router(assistant.router, prefix="/api/assistant", tags=["assistant"])
+app.include_router(auth_router.router, prefix="/api/auth", tags=["auth"])
 app.include_router(chat_router.router, prefix="/api/chat", tags=["chat"])
 
 

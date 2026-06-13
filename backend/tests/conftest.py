@@ -6,6 +6,7 @@ inside the SSE generator are pointed at the same SQLite session factory.
 """
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import Base, get_db
@@ -36,3 +37,16 @@ async def sqlite_db():
     chat_module.AsyncSessionLocal = _orig
     app.dependency_overrides.pop(get_db, None)
     await engine.dispose()
+
+
+@pytest.fixture
+async def auth_headers():
+    """Register a test user and return Authorization headers."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/api/auth/register",
+            json={"email": "test@example.com", "password": "testpass123"},
+        )
+        assert resp.status_code == 201, resp.text
+        token = resp.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}

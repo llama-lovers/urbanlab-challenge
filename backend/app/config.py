@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     vision_llm_api_key: str | None = None
     vision_llm_model: str = "gpt-4o-mini"
 
+    # Auth
+    jwt_secret: str = "change-me-in-production"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60 * 24 * 7  # 1 week
+
     # Model service — leave empty to use the built-in mock client
     model_service_url: str = ""
     model_service_api_key: str = ""

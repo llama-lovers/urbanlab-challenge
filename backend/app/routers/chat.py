@@ -26,14 +26,19 @@ from app.models.chat import (
     SessionListItem,
     SessionRead,
 )
+from app.models.user import User
+from app.services.auth import get_current_user
 from app.services.model_client import DeltaChunk, SourcesChunk, get_model_client
 
 router = APIRouter()
 
 
 @router.post("/sessions", response_model=SessionRead, status_code=201)
-async def create_session(db: AsyncSession = Depends(get_db)):
-    session = ChatSession()
+async def create_session(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    session = ChatSession(user_id=current_user.id)
     db.add(session)
     await db.commit()
     await db.refresh(session)
@@ -41,15 +46,33 @@ async def create_session(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/sessions", response_model=list[SessionListItem])
-async def list_sessions(db: AsyncSession = Depends(get_db)):
+async def list_sessions(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(
-        select(ChatSession).order_by(desc(ChatSession.updated_at))
+        select(ChatSession)
+        .where(ChatSession.user_id == current_user.id)
+        .order_by(desc(ChatSession.updated_at))
     )
     return result.scalars().all()
 
 
 @router.get("/sessions/{session_id}/messages", response_model=list[MessageRead])
-async def get_messages(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_messages(
+    session_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    session_result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == current_user.id,
+        )
+    )
+    if session_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
     result = await db.execute(
         select(ChatMessage)
         .where(ChatMessage.session_id == session_id)
@@ -68,18 +91,22 @@ async def get_messages(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 async def send_message(
     session_id: uuid.UUID,
     payload: ChatRequest,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(ChatSession).where(ChatSession.id == session_id))
+    result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == current_user.id,
+        )
+    )
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # Persist the user turn before starting the stream
     user_msg = ChatMessage(session_id=session_id, role="user", content=payload.content)
     db.add(user_msg)
     await db.commit()
 
-    # Load recent context for the model (most-recent N messages, chronological order)
     history_result = await db.execute(
         select(ChatMessage)
         .where(ChatMessage.session_id == session_id)
@@ -139,8 +166,17 @@ async def send_message(
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
-async def delete_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(ChatSession).where(ChatSession.id == session_id))
+async def delete_session(
+    session_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == current_user.id,
+        )
+    )
     session = result.scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
