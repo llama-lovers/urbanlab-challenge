@@ -4,6 +4,7 @@ import bcrypt
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +13,7 @@ from app.database import get_db
 from app.models.user import User
 
 http_bearer = HTTPBearer()
+http_bearer_optional = HTTPBearer(auto_error=False)
 
 
 def hash_password(password: str) -> str:
@@ -31,6 +33,23 @@ def create_access_token(user_id: int) -> str:
         settings.jwt_secret,
         algorithm=settings.jwt_algorithm,
     )
+
+
+async def get_optional_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer_optional),
+    db: AsyncSession = Depends(get_db),
+) -> Optional[User]:
+    if credentials is None:
+        return None
+    try:
+        payload = jwt.decode(
+            credentials.credentials, settings.jwt_secret, algorithms=[settings.jwt_algorithm]
+        )
+        user_id = int(payload["sub"])
+    except Exception:
+        return None
+    result = await db.execute(select(User).where(User.id == user_id))
+    return result.scalar_one_or_none()
 
 
 async def get_current_user(
