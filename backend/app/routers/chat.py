@@ -30,7 +30,12 @@ from app.models.chat import (
 )
 from app.models.user import User
 from app.services.auth import get_optional_user
-from app.services.model_client import DeltaChunk, SourcesChunk, get_model_client
+from app.services.model_client import (
+    DeltaChunk,
+    SourcesChunk,
+    get_model_client,
+    should_use_rag,
+)
 from app.services.rag_service import get_rag_service
 
 logger = logging.getLogger(__name__)
@@ -160,14 +165,22 @@ async def send_message(
             ],
         }
 
-    retrieval_query = _build_retrieval_query(
-        messages_for_model, payload.content, settings.rag_query_context_turns
-    )
-    try:
-        rag_context, rag_sources = await get_rag_service().retrieve(retrieval_query)
-    except Exception as rag_exc:
-        logger.error("RAG retrieve failed, proceeding without context: %s", rag_exc, exc_info=True)
-        rag_context, rag_sources = "", []
+    rag_context, rag_sources = "", []
+    use_rag = True
+    if settings.rag_gate_enabled:
+        use_rag = await should_use_rag(payload.content)
+
+    if use_rag:
+        retrieval_query = _build_retrieval_query(
+            messages_for_model, payload.content, settings.rag_query_context_turns
+        )
+        try:
+            rag_context, rag_sources = await get_rag_service().retrieve(retrieval_query)
+        except Exception as rag_exc:
+            logger.error(
+                "RAG retrieve failed, proceeding without context: %s", rag_exc, exc_info=True
+            )
+            rag_context, rag_sources = "", []
 
     system_content = settings.system_prompt
     if rag_context:

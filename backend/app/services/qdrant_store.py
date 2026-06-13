@@ -11,6 +11,7 @@ Expected payload per point (set by the pipeline or the assistant indexing endpoi
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import Any
@@ -207,24 +208,36 @@ class QdrantRagStore:
 
         client = self._get_client()
         page_key = settings.rag_page_key
-        seen_pages: set[str] = set()
-        expanded: list[SearchMatch] = []
 
+        # Pick unique pages best-match-first; remember each page's representative match.
+        seen_pages: set[str] = set()
+        plan: list[tuple[SearchMatch, str | None, str | None]] = []
         for m in matches:
             field = page_key if m.metadata.get(page_key) else "source_id"
             page_value = m.metadata.get(field)
             if not page_value:
-                expanded.append(m)
+                plan.append((m, None, None))
                 continue
             if str(page_value) in seen_pages:
                 continue
             seen_pages.add(str(page_value))
+            plan.append((m, field, str(page_value)))
 
-            siblings = await self._fetch_page_chunks(client, field, str(page_value))
+        # Fetch every page's chunks concurrently — sequential scrolls were the bottleneck.
+        fetches = await asyncio.gather(
+            *(
+                self._fetch_page_chunks(client, field, value)
+                if value is not None
+                else asyncio.sleep(0, result=[])
+                for _, field, value in plan
+            )
+        )
+
+        expanded: list[SearchMatch] = []
+        for (m, _field, _value), siblings in zip(plan, fetches, strict=False):
             if not siblings:
                 expanded.append(m)
                 continue
-
             siblings.sort(key=lambda p: p.payload.get("chunk_index") or 0)
             page_text = "\n\n".join(
                 p.payload.get("text", "") for p in siblings if p.payload.get("text")
