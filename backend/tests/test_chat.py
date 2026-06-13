@@ -79,7 +79,7 @@ async def test_chat_stream(auth_headers):
             async with client.stream(
                 "POST",
                 f"/api/chat/sessions/{sid}/messages",
-                json={"content": "Jak załatwić dowód osobisty w Lublinie?"},
+                data={"content": "Jak załatwić dowód osobisty w Lublinie?"},
                 headers=auth_headers,
             ) as resp:
                 assert resp.status_code == 200
@@ -122,7 +122,7 @@ async def test_session_title_auto_gen(auth_headers):
             async with client.stream(
                 "POST",
                 f"/api/chat/sessions/{sid}/messages",
-                json={"content": "Jak załatwić dowód osobisty w Lublinie?"},
+                data={"content": "Jak załatwić dowód osobisty w Lublinie?"},
                 headers=auth_headers,
             ) as resp:
                 assert resp.status_code == 200
@@ -137,7 +137,7 @@ async def test_session_title_auto_gen(auth_headers):
             async with client.stream(
                 "POST",
                 f"/api/chat/sessions/{sid}/messages",
-                json={"content": "Drugie pytanie"},
+                data={"content": "Drugie pytanie"},
                 headers=auth_headers,
             ) as resp:
                 async for _ in resp.aiter_lines():
@@ -156,3 +156,43 @@ async def test_unauthenticated_requests():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         assert (await client.post("/api/chat/sessions")).status_code == 401
         assert (await client.get("/api/chat/sessions")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_with_image(auth_headers):
+    # Minimal 1×1 white PNG (67 bytes)
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00"
+        b"\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", timeout=30
+    ) as client:
+        resp = await client.post("/api/chat/sessions", headers=auth_headers)
+        assert resp.status_code == 201
+        sid = resp.json()["id"]
+
+        try:
+            event_types: list[str] = []
+            current_event = "message"
+
+            async with client.stream(
+                "POST",
+                f"/api/chat/sessions/{sid}/messages",
+                data={"content": "Co widzisz na tym obrazku?"},
+                files={"image": ("test.png", png_bytes, "image/png")},
+                headers=auth_headers,
+            ) as resp:
+                assert resp.status_code == 200
+                assert "text/event-stream" in resp.headers.get("content-type", "")
+
+                async for line in resp.aiter_lines():
+                    if line.startswith("event:"):
+                        current_event = line.split(":", 1)[1].strip()
+                        event_types.append(current_event)
+
+            assert "delta" in event_types
+            assert "done" in event_types
+        finally:
+            await client.delete(f"/api/chat/sessions/{sid}", headers=auth_headers)

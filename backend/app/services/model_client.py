@@ -258,6 +258,21 @@ class OllamaChatModelClient:
             "stream": True,
         }
 
+        ollama_messages = []
+        for msg in messages:
+            if isinstance(msg.get("content"), list):
+                text = next((p["text"] for p in msg["content"] if p["type"] == "text"), "")
+                images = [
+                    p["image_url"]["url"].split(",", 1)[1]
+                    for p in msg["content"]
+                    if p["type"] == "image_url"
+                ]
+                ollama_messages.append({"role": msg["role"], "content": text, "images": images})
+            else:
+                ollama_messages.append(msg)
+
+        body["messages"] = ollama_messages
+
         try:
             async with httpx.AsyncClient(timeout=settings.model_timeout_s) as client:
                 async with client.stream(

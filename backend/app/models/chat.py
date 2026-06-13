@@ -71,10 +71,6 @@ class SessionListItem(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class MessageCreate(BaseModel):
-    content: str
-
-
 class MessageRead(BaseModel):
     id: int
     session_id: uuid.UUID
@@ -86,5 +82,3 @@ class MessageRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class ChatRequest(BaseModel):
-    content: str
