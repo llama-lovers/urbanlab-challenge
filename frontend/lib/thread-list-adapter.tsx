@@ -7,8 +7,10 @@ import {
   useAui,
   type RemoteThreadListAdapter,
   type ThreadHistoryAdapter,
+  type ThreadMessage,
   type ThreadMessageLike,
 } from '@assistant-ui/react'
+import { createAssistantStream } from 'assistant-stream'
 import {
   createSession,
   deleteSession,
@@ -17,8 +19,18 @@ import {
   listSessions,
   type StoredMessage,
 } from '@/lib/api'
-import { listAnonSessions, removeAnonSession } from '@/lib/anon-sessions'
+import { listAnonSessions, makeTitle, removeAnonSession } from '@/lib/anon-sessions'
 import { sourcesToMarkdown } from '@/lib/chat-adapter'
+
+/** First user message's text — what the backend titles the session from. */
+const firstUserText = (messages: readonly ThreadMessage[]): string => {
+  const first = messages.find((m) => m.role === 'user')
+  if (!first) return ''
+  return first.content
+    .map((p) => (p.type === 'text' ? p.text : ''))
+    .join('')
+    .trim()
+}
 
 const toThreadMessage = (m: StoredMessage): ThreadMessageLike => {
   const sources = m.role === 'assistant' ? (m.sources ?? []) : []
@@ -96,13 +108,18 @@ export const useBackendThreadListAdapter = (): RemoteThreadListAdapter =>
         removeAnonSession(remoteId)
         await deleteSession(remoteId)
       },
-      // The backend auto-titles sessions from the first message; there are no
-      // rename/archive endpoints, so these are intentional no-ops.
+      // There are no rename/archive endpoints, so these are intentional no-ops.
       async rename() {},
       async archive() {},
       async unarchive() {},
-      async generateTitle() {
-        return new ReadableStream()
+      // assistant-ui calls this once after the first run. The backend titles the
+      // session from the first user message; we mirror that title here so the
+      // sidebar updates immediately instead of only after a reload.
+      async generateTitle(_remoteId, messages) {
+        const title = makeTitle(firstUserText(messages))
+        return createAssistantStream((controller) => {
+          if (title) controller.appendText(title)
+        })
       },
       async fetch(remoteId) {
         if (!getToken()) {

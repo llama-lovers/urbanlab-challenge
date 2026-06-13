@@ -39,7 +39,7 @@ const write = (sessions: AnonSession[]): void => {
 }
 
 /** Mirror of the backend's `_make_title`: first line, truncated to 60 chars. */
-const makeTitle = (content: string, maxLen = 60): string => {
+export const makeTitle = (content: string, maxLen = 60): string => {
   const trimmed = content.trim()
   if (trimmed.length <= maxLen) return trimmed
   return trimmed.slice(0, maxLen).replace(/\s+\S*$/, '') + '…'
