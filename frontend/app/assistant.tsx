@@ -72,13 +72,15 @@ const ChatRuntime = () => {
         <div className="flex h-dvh w-full pr-0.5">
           <ThreadListSidebar />
           <SidebarInset>
-            <header className="flex h-16 shrink-0 items-center gap-2 border-b border-white/10 bg-white/5 px-4 backdrop-blur-md">
+            <header className="flex h-16 shrink-0 items-center gap-2 border-t-4 border-t-primary border-b border-border bg-card px-4">
               <SidebarTrigger />
               <Separator orientation="vertical" className="mr-2 h-4" />
               <Breadcrumb>
                 <BreadcrumbList>
                   <BreadcrumbItem>
-                    <BreadcrumbPage>UrbanLab Assistant</BreadcrumbPage>
+                    <BreadcrumbPage className="font-semibold tracking-tight">
+                      UrbanLab Assistant
+                    </BreadcrumbPage>
                   </BreadcrumbItem>
                 </BreadcrumbList>
               </Breadcrumb>
