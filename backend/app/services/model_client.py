@@ -330,21 +330,32 @@ class OllamaChatModelClient:
 # Fast RAG gate — a cheap LLM call that decides whether a turn needs retrieval.
 # ---------------------------------------------------------------------------
 
-_RAG_GATE_SYSTEM = (
-    "Jesteś szybkim klasyfikatorem dla asystenta UrbanLab Lublin. "
-    "Oceń, czy odpowiedź na wiadomość użytkownika wymaga wyszukania w bazie wiedzy "
-    "o sprawach urzędowych miasta Lublin (usługi, dokumenty, procedury, wydziały, "
-    "opłaty, terminy wizyt). Odpowiedz JEDNYM słowem: TAK albo NIE. "
-    "Powitania, podziękowania, smalltalk, testy ('ping', 'test', 'hej'), "
-    "pytania o samego asystenta -> NIE. /no_think"
+_RAG_QUERY_SYSTEM = (
+    "Jesteś modułem wyszukiwania dla asystenta spraw urzędowych Miasta Lublin (baza BIP). "
+    "Na podstawie historii rozmowy i OSTATNIEGO pytania użytkownika ułóż JEDNO zwięzłe, "
+    "samodzielne zapytanie wyszukiwania po polsku — temat i najważniejsze słowa kluczowe. "
+    "Rozwiń odniesienia z kontekstu (np. 'a ile to kosztuje?' uzupełnij o to, czego dotyczy). "
+    "Całkowicie ignoruj wiadomości-śmieci, testy i liczby bez znaczenia "
+    "('ping', '800+', losowe znaki). "
+    "Jeśli ostatnia wiadomość to powitanie, podziękowanie, test lub nie wymaga bazy wiedzy "
+    "urzędowej — odpowiedz dokładnie: NONE. "
+    "Zwróć WYŁĄCZNIE samo zapytanie albo NONE — bez cudzysłowów, etykiet i wyjaśnień. /no_think"
 )
 
 
-def _parse_gate(text: str) -> bool:
-    cleaned = re.sub(r"<think>.*?</think>", " ", text or "", flags=re.S).strip().lower()
-    if not cleaned:
-        return True  # fail open: don't silently lose retrieval on an empty reply
-    return not cleaned.startswith("nie")
+def _strip_think(text: str) -> str:
+    return re.sub(r"<think>.*?</think>", " ", text or "", flags=re.S).strip()
+
+
+def _format_recent(history: list[dict], max_turns: int) -> str:
+    lines: list[str] = []
+    for m in history[-max_turns:]:
+        content = m.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        role = "Użytkownik" if m.get("role") == "user" else "Asystent"
+        lines.append(f"{role}: {content.strip()[:300]}")
+    return "\n".join(lines)
 
 
 async def _quick_complete(messages: list[dict], max_tokens: int, timeout: float) -> str:
@@ -380,29 +391,48 @@ async def _quick_complete(messages: list[dict], max_tokens: int, timeout: float)
             resp.raise_for_status()
             return (resp.json().get("message", {}).get("content") or "").strip()
 
-    # No live provider (mock/demo) — cannot classify, so allow retrieval.
-    return "TAK"
+    # No live provider (mock/demo) — signal "no rewrite available".
+    return ""
 
 
-async def should_use_rag(query: str) -> bool:
+async def build_rag_query(history: list[dict], question: str) -> str | None:
     """
-    Fast yes/no gate: does this turn need a knowledge-base lookup at all?
-    Fails open (returns True) on any error so retrieval is never silently lost.
+    Turn the conversation + latest message into ONE clean, standalone search query
+    for retrieval. This is both the gate and the query builder:
+
+      - returns None  -> the turn needs no knowledge-base lookup (skip RAG)
+      - returns str   -> the rewritten query to embed (junk turns dropped,
+                         follow-ups expanded with context)
+
+    Fails open to the raw question on any error so retrieval is never lost, but
+    never falls back to concatenating raw history (that poisons the embedding).
     """
-    if not query.strip():
-        return False
+    q = question.strip()
+    if not q:
+        return None
+
+    convo = _format_recent(history, settings.rag_query_context_turns * 2)
+    user_block = (
+        f"Historia rozmowy:\n{convo}\n\n" if convo else ""
+    ) + f"Ostatnie pytanie użytkownika:\n{q}\n\nZapytanie wyszukiwania:"
     messages = [
-        {"role": "system", "content": _RAG_GATE_SYSTEM},
-        {"role": "user", "content": query.strip()},
+        {"role": "system", "content": _RAG_QUERY_SYSTEM},
+        {"role": "user", "content": user_block},
     ]
     try:
-        answer = await _quick_complete(messages, max_tokens=8, timeout=settings.rag_gate_timeout_s)
+        raw = await _quick_complete(messages, max_tokens=64, timeout=settings.rag_gate_timeout_s)
     except Exception as exc:
-        logger.warning("RAG gate failed (%s); defaulting to retrieval enabled", exc)
-        return True
-    decision = _parse_gate(answer)
-    logger.info("RAG gate: %r -> %s (raw=%.40r)", query[:60], decision, answer)
-    return decision
+        logger.warning("RAG query rewrite failed (%s); using raw question", exc)
+        return q
+
+    cleaned = _strip_think(raw).strip().strip('"').strip()
+    if not cleaned:
+        return q  # no live rewriter / blank reply -> search the literal question
+    if cleaned.upper().startswith("NONE"):
+        logger.info("RAG query: skip (no lookup) for %r", q[:60])
+        return None
+    logger.info("RAG query rewrite: %r -> %r", q[:60], cleaned[:90])
+    return cleaned
 
 
 def get_model_client() -> MockModelClient | OpenAICompatibleModelClient | OllamaChatModelClient:

@@ -33,8 +33,8 @@ from app.services.auth import get_optional_user
 from app.services.model_client import (
     DeltaChunk,
     SourcesChunk,
+    build_rag_query,
     get_model_client,
-    should_use_rag,
 )
 from app.services.rag_service import get_rag_service
 
@@ -49,25 +49,6 @@ def _check_session_access(session: ChatSession | None, current_user: User | None
     if session.user_id is not None:
         if current_user is None or session.user_id != current_user.id:
             raise HTTPException(status_code=404, detail="Session not found")
-
-
-def _build_retrieval_query(history: list[dict], current: str, max_turns: int) -> str:
-    """
-    Fold the recent user turns into the RAG query so follow-up questions
-    ("a ile to kosztuje?") retrieve against the real topic, not just themselves.
-    """
-    if max_turns <= 1:
-        return current
-    user_turns = [
-        m["content"]
-        for m in history
-        if m.get("role") == "user" and isinstance(m.get("content"), str) and m["content"].strip()
-    ]
-    recent = user_turns[-max_turns:]
-    if not recent or recent[-1] != current:
-        recent.append(current)
-    query = "\n".join(recent).strip()
-    return query[:1000] or current
 
 
 def _make_title(content: str, max_len: int = 60) -> str:
@@ -166,14 +147,15 @@ async def send_message(
         }
 
     rag_context, rag_sources = "", []
-    use_rag = True
+    # One LLM call builds a clean standalone search query (and gates RAG): it
+    # expands follow-ups with context and drops junk turns that would otherwise
+    # poison the embedding. None -> this turn needs no knowledge-base lookup.
     if settings.rag_gate_enabled:
-        use_rag = await should_use_rag(payload.content)
+        retrieval_query = await build_rag_query(messages_for_model, payload.content)
+    else:
+        retrieval_query = payload.content
 
-    if use_rag:
-        retrieval_query = _build_retrieval_query(
-            messages_for_model, payload.content, settings.rag_query_context_turns
-        )
+    if retrieval_query:
         try:
             rag_context, rag_sources = await get_rag_service().retrieve(retrieval_query)
         except Exception as rag_exc:
