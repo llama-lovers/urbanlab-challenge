@@ -5,6 +5,7 @@ RagService embeds the user question, searches Qdrant, and returns:
   - a formatted context string ready to be injected into the system prompt
   - a sources list ready to be emitted as an SSE `sources` event
 """
+
 from __future__ import annotations
 
 import logging
@@ -22,9 +23,7 @@ class RagService:
         reranker_service = RerankerService()
         self._store = QdrantRagStore(embedding_service, reranker_service)
 
-    async def retrieve(
-        self, question: str, top_k: int | None = None
-    ) -> tuple[str, list[dict]]:
+    async def retrieve(self, question: str, top_k: int | None = None) -> tuple[str, list[dict]]:
         """
         Returns (context_text, sse_sources).
         Both are empty when Qdrant has no relevant results or is unreachable.
@@ -40,6 +39,9 @@ class RagService:
         if not matches:
             logger.warning("RAG retrieve: no matches found for question %.80r", question)
             return "", []
+
+        if settings.rag_expand_to_page:
+            matches = await self._store.expand_to_pages(matches)
 
         parts = []
         for i, m in enumerate(matches, 1):

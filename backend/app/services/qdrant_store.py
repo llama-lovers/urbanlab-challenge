@@ -192,6 +192,76 @@ class QdrantRagStore:
 
         return matches, warnings
 
+    async def expand_to_pages(self, matches: list[SearchMatch]) -> list[SearchMatch]:
+        """
+        Each match is a paragraph-level node. Expand every matched paragraph to its
+        full parent page — all sibling chunks that share the page key, concatenated
+        in `chunk_index` order — so the model sees the whole page, not a fragment.
+
+        Pages are returned best-match-first and de-duplicated; the best paragraph's
+        metadata and score represent the page. Matches without a page key are kept
+        as-is.
+        """
+        if not matches:
+            return matches
+
+        client = self._get_client()
+        page_key = settings.rag_page_key
+        seen_pages: set[str] = set()
+        expanded: list[SearchMatch] = []
+
+        for m in matches:
+            field = page_key if m.metadata.get(page_key) else "source_id"
+            page_value = m.metadata.get(field)
+            if not page_value:
+                expanded.append(m)
+                continue
+            if str(page_value) in seen_pages:
+                continue
+            seen_pages.add(str(page_value))
+
+            siblings = await self._fetch_page_chunks(client, field, str(page_value))
+            if not siblings:
+                expanded.append(m)
+                continue
+
+            siblings.sort(key=lambda p: p.payload.get("chunk_index") or 0)
+            page_text = "\n\n".join(
+                p.payload.get("text", "") for p in siblings if p.payload.get("text")
+            )
+            expanded.append(
+                SearchMatch(
+                    id=m.id,
+                    text=page_text or m.text,
+                    score=m.score,
+                    metadata=m.metadata,
+                )
+            )
+
+        logger.info(
+            "Parent expansion: %d paragraph matches -> %d unique pages",
+            len(matches),
+            len(expanded),
+        )
+        return expanded
+
+    async def _fetch_page_chunks(self, client: AsyncQdrantClient, field: str, value: str) -> list:
+        flt = Filter(must=[FieldCondition(key=field, match=MatchValue(value=value))])
+        collected: list = []
+        offset = None
+        while len(collected) < settings.rag_max_page_chunks:
+            points, offset = await client.scroll(
+                collection_name=settings.qdrant_collection,
+                scroll_filter=flt,
+                limit=min(256, settings.rag_max_page_chunks - len(collected)),
+                offset=offset,
+                with_payload=True,
+            )
+            collected.extend(points)
+            if offset is None:
+                break
+        return collected
+
     def answer(self, question: str, matches: list[SearchMatch]) -> str:
         if not matches:
             return (
