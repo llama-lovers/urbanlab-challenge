@@ -69,16 +69,20 @@ export async function createSession(): Promise<string> {
   return id;
 }
 
-/** POST a user message; returns the raw SSE Response for the caller to stream. */
+/**
+ * POST a user message; returns the raw SSE Response for the caller to stream.
+ * `image` is an optional base64 data URL (multimodal input).
+ */
 export async function sendMessage(
   sessionId: string,
   content: string,
+  image?: string,
   signal?: AbortSignal,
 ): Promise<Response> {
   const res = await fetch(`${API_URL}/api/chat/sessions/${sessionId}/messages`, {
     method: "POST",
     headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(image ? { content, image } : { content }),
     signal,
   });
   if (!res.ok || !res.body) throw await asError(res, `Request failed (${res.status})`);

@@ -5,16 +5,27 @@ import type {
 } from "@assistant-ui/react";
 import { createSession, sendMessage } from "@/lib/api";
 
-const lastUserText = (messages: readonly ThreadMessage[]): string => {
+// Extract the text + first image (as a base64 data URL) from the latest user turn.
+const lastUserInput = (
+  messages: readonly ThreadMessage[],
+): { text: string; image?: string } => {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.role !== "user") continue;
-    return m.content
+    const text = m.content
       .map((p) => (p.type === "text" ? p.text : ""))
       .join("")
       .trim();
+    let image: string | undefined;
+    for (const p of m.content) {
+      if (p.type === "image" && p.image) {
+        image = p.image;
+        break;
+      }
+    }
+    return { text, image };
   }
-  return "";
+  return { text: "" };
 };
 
 type Source = { title?: string; url?: string };
@@ -50,11 +61,11 @@ export class UrbanLabAdapter implements ChatModelAdapter {
   }
 
   async *run({ messages, abortSignal, unstable_threadId }: ChatModelRunOptions) {
-    const content = lastUserText(messages);
-    if (!content) return;
+    const { text: content, image } = lastUserInput(messages);
+    if (!content && !image) return;
 
     const sessionId = await this.sessionFor(unstable_threadId ?? "default");
-    const response = await sendMessage(sessionId, content, abortSignal);
+    const response = await sendMessage(sessionId, content, image, abortSignal);
 
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();

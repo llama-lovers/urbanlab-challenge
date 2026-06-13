@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import {
   AssistantRuntimeProvider,
+  SimpleImageAttachmentAdapter,
   useLocalRuntime,
 } from "@assistant-ui/react";
 import { UrbanLabAdapter } from "@/lib/chat-adapter";
@@ -32,7 +33,8 @@ export const Assistant = () => {
 
 const Chat = () => {
   const adapter = useMemo(() => new UrbanLabAdapter(), []);
-  const runtime = useLocalRuntime(adapter);
+  const attachments = useMemo(() => new SimpleImageAttachmentAdapter(), []);
+  const runtime = useLocalRuntime(adapter, { adapters: { attachments } });
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
