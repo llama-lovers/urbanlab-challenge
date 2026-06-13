@@ -3,16 +3,11 @@ Model service adapter — single seam between the orchestration layer and the AI
 
 Priority order for get_model_client():
   1. OPENROUTER_API_KEY set  → OpenAICompatibleModelClient (OpenRouter cloud)
-  2. MODEL_SERVICE_URL set   → RealModelClient (teammates' custom HTTP service)
+  2. MODEL_SERVICE_URL set   → OpenAICompatibleModelClient (local Ollama via Docker, or any
+                               OpenAI-compatible endpoint; set MODEL_SERVICE_MODEL accordingly)
   3. fallback                → MockModelClient (demo mode, no external calls)
 
-Custom model service contract (RealModelClient):
-    POST {MODEL_SERVICE_URL}/chat
-    Body:    {"messages": [...], "session_id": str}
-    Headers: Authorization: Bearer {MODEL_SERVICE_API_KEY}
-    SSE:     event: delta   data: {"text": "..."}
-             event: sources data: [{title, url}, ...]
-             event: done    data: {}
+Both live clients share the same OpenAI-compatible streaming + tool-calling implementation.
 """
 
 import asyncio
@@ -27,6 +22,64 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Tool definitions
+# ---------------------------------------------------------------------------
+
+_RESERVATION_TOOL: dict = {
+    "type": "function",
+    "function": {
+        "name": "get_reservation_slots",
+        "description": (
+            "Pobiera dostępne terminy wizyt w urzędzie miasta Lublin (system Qmatic). "
+            "Użyj gdy użytkownik pyta o wolne terminy, chce umówić wizytę, "
+            "lub potrzebuje informacji o dostępnych godzinach w urzędzie."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "service_name": {
+                    "type": "string",
+                    "description": (
+                        "Nazwa usługi po polsku, np. 'Dowody osobiste', "
+                        "'Rejestracja Pojazdów', 'Meldunki', 'Podatki', 'Kasy'."
+                    ),
+                },
+                "date_from": {
+                    "type": "string",
+                    "description": "Data od której szukać terminów (YYYY-MM-DD). Domyślnie od dzisiaj.",
+                },
+            },
+            "required": ["service_name"],
+        },
+    },
+}
+
+_TOOLS = [_RESERVATION_TOOL]
+
+
+async def _execute_tool(name: str, arguments_json: str) -> str:
+    from app.services.reservation_service import get_reservation_slots
+
+    try:
+        args = json.loads(arguments_json)
+    except json.JSONDecodeError:
+        return json.dumps({"error": "Invalid arguments JSON"})
+
+    if name == "get_reservation_slots":
+        result = await get_reservation_slots(
+            service_name=args.get("service_name", ""),
+            date_from=args.get("date_from"),
+        )
+        return json.dumps(result, ensure_ascii=False)
+
+    return json.dumps({"error": f"Unknown tool: {name}"})
+
+
+# ---------------------------------------------------------------------------
+# Chunk types
+# ---------------------------------------------------------------------------
+
 
 @dataclass
 class DeltaChunk:
@@ -39,6 +92,11 @@ class SourcesChunk:
 
 
 ChatChunk = DeltaChunk | SourcesChunk
+
+
+# ---------------------------------------------------------------------------
+# Clients
+# ---------------------------------------------------------------------------
 
 
 class MockModelClient:
@@ -71,31 +129,46 @@ class MockModelClient:
 
 
 class OpenAICompatibleModelClient:
-    """Streams from any OpenAI-compatible /chat/completions endpoint (OpenRouter, Ollama, vLLM)."""
+    """
+    Streams from any OpenAI-compatible /chat/completions endpoint with tool-calling support.
 
-    async def stream(
-        self, messages: list[dict], session_id: str
-    ) -> AsyncIterator[ChatChunk]:
-        headers: dict[str, str] = {
-            "Authorization": f"Bearer {settings.openrouter_api_key}",
+    Used for both:
+    - OpenRouter (cloud): api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL
+    - Local Ollama (Docker): api_key="" or "ollama", base_url=http://ollama:11434/v1
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        send_app_headers: bool = False,
+    ) -> None:
+        self._endpoint = f"{base_url.rstrip('/')}/chat/completions"
+        self._api_key = api_key
+        self._model = model
+        self._send_app_headers = send_app_headers
+
+    def _headers(self) -> dict[str, str]:
+        h: dict[str, str] = {
+            "Authorization": f"Bearer {self._api_key}",
             "Accept": "text/event-stream",
         }
-        if settings.openrouter_send_app_headers:
-            headers["HTTP-Referer"] = "https://urbanlab.lublin.eu"
-            headers["X-Title"] = "UrbanLab Lublin"
+        if self._send_app_headers:
+            h["HTTP-Referer"] = "https://urbanlab.lublin.eu"
+            h["X-Title"] = "UrbanLab Lublin"
+        return h
 
-        body = {
-            "model": settings.openrouter_model,
-            "messages": messages,
-            "stream": True,
-        }
+    async def _stream_request(
+        self, messages: list[dict], tools: list[dict] | None = None
+    ) -> AsyncIterator[dict]:
+        body: dict = {"model": self._model, "messages": messages, "stream": True}
+        if tools:
+            body["tools"] = tools
 
         async with httpx.AsyncClient(timeout=settings.model_timeout_s) as client:
             async with client.stream(
-                "POST",
-                f"{settings.openrouter_base_url.rstrip('/')}/chat/completions",
-                json=body,
-                headers=headers,
+                "POST", self._endpoint, json=body, headers=self._headers()
             ) as resp:
                 resp.raise_for_status()
                 async for line in resp.aiter_lines():
@@ -105,57 +178,89 @@ class OpenAICompatibleModelClient:
                     if not raw or raw == "[DONE]":
                         continue
                     try:
-                        payload = json.loads(raw)
+                        yield json.loads(raw)
                     except json.JSONDecodeError:
                         continue
 
-                    content = (
-                        payload.get("choices", [{}])[0]
-                        .get("delta", {})
-                        .get("content")
-                    )
-                    if content:
-                        yield DeltaChunk(text=content)
-
-
-class RealModelClient:
     async def stream(
         self, messages: list[dict], session_id: str
     ) -> AsyncIterator[ChatChunk]:
-        headers: dict[str, str] = {"Accept": "text/event-stream"}
-        if settings.model_service_api_key:
-            headers["Authorization"] = f"Bearer {settings.model_service_api_key}"
+        # --- first pass: stream response, accumulate any tool calls ---
+        tool_calls_acc: dict[int, dict] = {}
+        finish_reason: str | None = None
+        assistant_text = ""
 
-        async with httpx.AsyncClient(timeout=settings.model_timeout_s) as client:
-            async with client.stream(
-                "POST",
-                f"{settings.model_service_url}/chat",
-                json={"messages": messages, "session_id": session_id},
-                headers=headers,
-            ) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if not line:
-                        continue
-                    raw = line[5:].strip() if line.startswith("data:") else line.strip()
-                    if not raw or raw == "[DONE]":
-                        continue
-                    try:
-                        payload = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
+        async for payload in self._stream_request(messages, tools=_TOOLS):
+            choice = (payload.get("choices") or [{}])[0]
+            delta = choice.get("delta", {})
+            finish_reason = choice.get("finish_reason") or finish_reason
 
-                    if isinstance(payload, list):
-                        yield SourcesChunk(sources=payload)
-                    elif payload.get("type") == "delta" or "text" in payload:
-                        yield DeltaChunk(text=payload.get("text", ""))
-                    elif payload.get("type") == "sources" or "sources" in payload:
-                        yield SourcesChunk(sources=payload.get("sources", []))
+            content = delta.get("content")
+            if content:
+                assistant_text += content
+                yield DeltaChunk(text=content)
+
+            for tc in delta.get("tool_calls") or []:
+                idx = tc.get("index", 0)
+                if idx not in tool_calls_acc:
+                    tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                acc = tool_calls_acc[idx]
+                if tc.get("id"):
+                    acc["id"] = tc["id"]
+                fn = tc.get("function") or {}
+                if fn.get("name"):
+                    acc["name"] = fn["name"]
+                acc["arguments"] += fn.get("arguments", "")
+
+        if finish_reason != "tool_calls" or not tool_calls_acc:
+            return
+
+        # --- execute tools ---
+        assistant_tool_calls = [
+            {
+                "id": acc["id"],
+                "type": "function",
+                "function": {"name": acc["name"], "arguments": acc["arguments"]},
+            }
+            for acc in tool_calls_acc.values()
+        ]
+        tool_messages: list[dict] = []
+        for acc in tool_calls_acc.values():
+            logger.info("Calling tool %s args=%s", acc["name"], acc["arguments"])
+            result_str = await _execute_tool(acc["name"], acc["arguments"])
+            logger.debug("Tool %s result: %s", acc["name"], result_str[:200])
+            tool_messages.append(
+                {"role": "tool", "tool_call_id": acc["id"], "content": result_str}
+            )
+
+        messages_with_result = [
+            *messages,
+            {"role": "assistant", "content": assistant_text or None, "tool_calls": assistant_tool_calls},
+            *tool_messages,
+        ]
+
+        # --- second pass: stream final response ---
+        async for payload in self._stream_request(messages_with_result):
+            content = (
+                (payload.get("choices") or [{}])[0].get("delta", {}).get("content")
+            )
+            if content:
+                yield DeltaChunk(text=content)
 
 
-def get_model_client() -> MockModelClient | OpenAICompatibleModelClient | RealModelClient:
+def get_model_client() -> MockModelClient | OpenAICompatibleModelClient:
     if settings.openrouter_api_key:
-        return OpenAICompatibleModelClient()
+        return OpenAICompatibleModelClient(
+            base_url=settings.openrouter_base_url,
+            api_key=settings.openrouter_api_key,
+            model=settings.openrouter_model,
+            send_app_headers=settings.openrouter_send_app_headers,
+        )
     if settings.model_service_url:
-        return RealModelClient()
+        return OpenAICompatibleModelClient(
+            base_url=settings.model_service_url,
+            api_key=settings.model_service_api_key or "local",
+            model=settings.model_service_model,
+            send_app_headers=False,
+        )
     return MockModelClient()

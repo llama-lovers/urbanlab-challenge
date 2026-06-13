@@ -28,17 +28,20 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24 * 7  # 1 week
 
-    # Model service — leave empty to use the built-in mock client
-    model_service_url: str = ""
-    model_service_api_key: str = ""
     model_timeout_s: float = 60.0
     history_limit: int = 20
 
-    # OpenRouter / OpenAI-compatible model
+    # OpenRouter / OpenAI-compatible cloud model
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_model: str = "openai/gpt-4o-mini"
     openrouter_send_app_headers: bool = True
+
+    # Local model service (Ollama via Docker or any OpenAI-compatible HTTP endpoint)
+    # MODEL_SERVICE_URL=http://ollama:11434/v1  MODEL_SERVICE_MODEL=llama3.2
+    model_service_url: str = ""
+    model_service_api_key: str = ""
+    model_service_model: str = "llama3.2"
 
     # Qdrant
     qdrant_url: str = "http://localhost:6333"
@@ -47,8 +50,13 @@ class Settings(BaseSettings):
 
     # RAG-augmented chat
     rag_top_k: int = 5
+    system_prompt: str = (
+        "Jesteś pomocnym asystentem UrbanLab Lublin — pomagasz mieszkańcom Lublina "
+        "załatwiać sprawy urzędowe. "
+        "Jeśli uznasz, że sprawa wymaga osobistej wizyty w urzędzie, możesz to zasugerować — "
+        "ale tylko wtedy, gdy jest to naprawdę potrzebne. Nie proponuj wizyty po każdej odpowiedzi."
+    )
     rag_system_prompt: str = (
-        "Jesteś pomocnym asystentem UrbanLab Lublin. "
         "Odpowiadaj wyłącznie na podstawie poniższego kontekstu. "
         "Jeśli odpowiedź nie wynika z kontekstu, napisz że nie wiesz.\n\n"
         "Kontekst:\n{context}"
