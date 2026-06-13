@@ -13,6 +13,7 @@ Both live clients share the same OpenAI-compatible streaming + tool-calling impl
 import asyncio
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -47,7 +48,9 @@ _RESERVATION_TOOL: dict = {
                 },
                 "date_from": {
                     "type": "string",
-                    "description": "Data od której szukać terminów (YYYY-MM-DD). Domyślnie od dzisiaj.",
+                    "description": (
+                        "Data od której szukać terminów (YYYY-MM-DD). Domyślnie od dzisiaj."
+                    ),
                 },
             },
             "required": ["service_name"],
@@ -119,9 +122,7 @@ class MockModelClient:
         },
     ]
 
-    async def stream(
-        self, messages: list[dict], session_id: str
-    ) -> AsyncIterator[ChatChunk]:
+    async def stream(self, messages: list[dict], session_id: str) -> AsyncIterator[ChatChunk]:
         for word in self._REPLY.split():
             yield DeltaChunk(text=word + " ")
             await asyncio.sleep(0.02)
@@ -168,7 +169,9 @@ class OpenAICompatibleModelClient:
 
         logger.info(
             "OpenRouter request: model=%s messages=%d tools=%d",
-            self._model, len(messages), len(tools) if tools else 0,
+            self._model,
+            len(messages),
+            len(tools) if tools else 0,
         )
         logger.debug("OpenRouter messages: %s", json.dumps(messages, ensure_ascii=False))
 
@@ -179,9 +182,7 @@ class OpenAICompatibleModelClient:
                 if resp.status_code >= 400:
                     body_bytes = await resp.aread()
                     error_body = body_bytes.decode(errors="replace")
-                    logger.error(
-                        "OpenRouter error %d: %s", resp.status_code, error_body
-                    )
+                    logger.error("OpenRouter error %d: %s", resp.status_code, error_body)
                     raise httpx.HTTPStatusError(
                         f"HTTP {resp.status_code}: {error_body}",
                         request=resp.request,
@@ -198,9 +199,7 @@ class OpenAICompatibleModelClient:
                     except json.JSONDecodeError:
                         continue
 
-    async def stream(
-        self, messages: list[dict], session_id: str
-    ) -> AsyncIterator[ChatChunk]:
+    async def stream(self, messages: list[dict], session_id: str) -> AsyncIterator[ChatChunk]:
         # --- first pass: stream response, accumulate any tool calls ---
         tool_calls_acc: dict[int, dict] = {}
         finish_reason: str | None = None
@@ -245,29 +244,27 @@ class OpenAICompatibleModelClient:
             logger.info("Calling tool %s args=%s", acc["name"], acc["arguments"])
             result_str = await _execute_tool(acc["name"], acc["arguments"])
             logger.debug("Tool %s result: %s", acc["name"], result_str[:200])
-            tool_messages.append(
-                {"role": "tool", "tool_call_id": acc["id"], "content": result_str}
-            )
+            tool_messages.append({"role": "tool", "tool_call_id": acc["id"], "content": result_str})
 
         messages_with_result = [
             *messages,
-            {"role": "assistant", "content": assistant_text or None, "tool_calls": assistant_tool_calls},
+            {
+                "role": "assistant",
+                "content": assistant_text or None,
+                "tool_calls": assistant_tool_calls,
+            },
             *tool_messages,
         ]
 
         # --- second pass: stream final response ---
         async for payload in self._stream_request(messages_with_result):
-            content = (
-                (payload.get("choices") or [{}])[0].get("delta", {}).get("content")
-            )
+            content = (payload.get("choices") or [{}])[0].get("delta", {}).get("content")
             if content:
                 yield DeltaChunk(text=content)
 
 
 class OllamaChatModelClient:
-    async def stream(
-        self, messages: list[dict], session_id: str
-    ) -> AsyncIterator[ChatChunk]:
+    async def stream(self, messages: list[dict], session_id: str) -> AsyncIterator[ChatChunk]:
         body = {
             "model": settings.chat_llm_model,
             "messages": messages,
@@ -291,7 +288,8 @@ class OllamaChatModelClient:
 
         logger.info(
             "Ollama request: model=%s messages=%d",
-            settings.chat_llm_model, len(ollama_messages),
+            settings.chat_llm_model,
+            len(ollama_messages),
         )
         logger.debug("Ollama messages: %s", json.dumps(ollama_messages, ensure_ascii=False))
 
@@ -305,9 +303,7 @@ class OllamaChatModelClient:
                     if resp.status_code >= 400:
                         body_bytes = await resp.aread()
                         error_body = body_bytes.decode(errors="replace")
-                        logger.error(
-                            "Ollama error %d: %s", resp.status_code, error_body
-                        )
+                        logger.error("Ollama error %d: %s", resp.status_code, error_body)
                         raise httpx.HTTPStatusError(
                             f"HTTP {resp.status_code}: {error_body}",
                             request=resp.request,
@@ -328,6 +324,85 @@ class OllamaChatModelClient:
             logger.warning("Ollama chat service unavailable (%s); falling back to mock model", exc)
             async for chunk in MockModelClient().stream(messages, session_id):
                 yield chunk
+
+
+# ---------------------------------------------------------------------------
+# Fast RAG gate — a cheap LLM call that decides whether a turn needs retrieval.
+# ---------------------------------------------------------------------------
+
+_RAG_GATE_SYSTEM = (
+    "Jesteś szybkim klasyfikatorem dla asystenta UrbanLab Lublin. "
+    "Oceń, czy odpowiedź na wiadomość użytkownika wymaga wyszukania w bazie wiedzy "
+    "o sprawach urzędowych miasta Lublin (usługi, dokumenty, procedury, wydziały, "
+    "opłaty, terminy wizyt). Odpowiedz JEDNYM słowem: TAK albo NIE. "
+    "Powitania, podziękowania, smalltalk, testy ('ping', 'test', 'hej'), "
+    "pytania o samego asystenta -> NIE. /no_think"
+)
+
+
+def _parse_gate(text: str) -> bool:
+    cleaned = re.sub(r"<think>.*?</think>", " ", text or "", flags=re.S).strip().lower()
+    if not cleaned:
+        return True  # fail open: don't silently lose retrieval on an empty reply
+    return not cleaned.startswith("nie")
+
+
+async def _quick_complete(messages: list[dict], max_tokens: int, timeout: float) -> str:
+    if settings.openrouter_api_key:
+        body = {
+            "model": settings.rag_gate_model or settings.openrouter_model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": 0,
+            "stream": False,
+        }
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                f"{settings.openrouter_base_url.rstrip('/')}/chat/completions",
+                json=body,
+                headers={"Authorization": f"Bearer {settings.openrouter_api_key}"},
+            )
+            resp.raise_for_status()
+            return (resp.json()["choices"][0]["message"].get("content") or "").strip()
+
+    if settings.chat_llm_provider == "ollama" and settings.chat_llm_base_url:
+        body = {
+            "model": settings.rag_gate_model or settings.chat_llm_model,
+            "messages": messages,
+            "stream": False,
+            "think": False,
+            "options": {"num_predict": max_tokens, "temperature": 0},
+        }
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                f"{settings.chat_llm_base_url.rstrip('/')}/api/chat", json=body
+            )
+            resp.raise_for_status()
+            return (resp.json().get("message", {}).get("content") or "").strip()
+
+    # No live provider (mock/demo) — cannot classify, so allow retrieval.
+    return "TAK"
+
+
+async def should_use_rag(query: str) -> bool:
+    """
+    Fast yes/no gate: does this turn need a knowledge-base lookup at all?
+    Fails open (returns True) on any error so retrieval is never silently lost.
+    """
+    if not query.strip():
+        return False
+    messages = [
+        {"role": "system", "content": _RAG_GATE_SYSTEM},
+        {"role": "user", "content": query.strip()},
+    ]
+    try:
+        answer = await _quick_complete(messages, max_tokens=8, timeout=settings.rag_gate_timeout_s)
+    except Exception as exc:
+        logger.warning("RAG gate failed (%s); defaulting to retrieval enabled", exc)
+        return True
+    decision = _parse_gate(answer)
+    logger.info("RAG gate: %r -> %s (raw=%.40r)", query[:60], decision, answer)
+    return decision
 
 
 def get_model_client() -> MockModelClient | OpenAICompatibleModelClient | OllamaChatModelClient:

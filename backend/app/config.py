@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     rag_expand_to_page: bool = True
     rag_page_key: str = "url"  # payload field that identifies the parent page
     rag_max_page_chunks: int = 60  # safety cap on chunks pulled per page
+    # Fast LLM gate: a cheap yes/no call that decides whether a turn needs retrieval
+    # at all, so smalltalk/tests ("ping") skip RAG entirely (no sources, no latency).
+    rag_gate_enabled: bool = True
+    rag_gate_model: str = ""  # empty -> reuse the chat model; point at a tiny model to go faster
+    rag_gate_timeout_s: float = 5.0
     system_prompt: str = (
         "Jesteś pomocnym asystentem UrbanLab Lublin — pomagasz mieszkańcom Lublina "
         "załatwiać sprawy urzędowe. "
