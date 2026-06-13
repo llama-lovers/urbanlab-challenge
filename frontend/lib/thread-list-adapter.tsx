@@ -13,9 +13,11 @@ import {
   createSession,
   deleteSession,
   getSessionMessages,
+  getToken,
   listSessions,
   type StoredMessage,
 } from '@/lib/api'
+import { listAnonSessions, removeAnonSession } from '@/lib/anon-sessions'
 import { sourcesToMarkdown } from '@/lib/chat-adapter'
 
 const toThreadMessage = (m: StoredMessage): ThreadMessageLike => {
@@ -64,6 +66,18 @@ export const useBackendThreadListAdapter = (): RemoteThreadListAdapter =>
   useMemo<RemoteThreadListAdapter>(
     () => ({
       async list() {
+        // Anonymous sessions aren't returned by the backend (no owner), so we
+        // rebuild the list from the localStorage registry instead.
+        if (!getToken()) {
+          return {
+            threads: listAnonSessions().map((s) => ({
+              status: 'regular' as const,
+              remoteId: s.id,
+              title: s.title ?? undefined,
+              lastMessageAt: new Date(s.updatedAt),
+            })),
+          }
+        }
         const sessions = await listSessions()
         return {
           threads: sessions.map((s) => ({
@@ -79,6 +93,7 @@ export const useBackendThreadListAdapter = (): RemoteThreadListAdapter =>
         return { remoteId, externalId: undefined }
       },
       async delete(remoteId) {
+        removeAnonSession(remoteId)
         await deleteSession(remoteId)
       },
       // The backend auto-titles sessions from the first message; there are no
@@ -90,6 +105,15 @@ export const useBackendThreadListAdapter = (): RemoteThreadListAdapter =>
         return new ReadableStream()
       },
       async fetch(remoteId) {
+        if (!getToken()) {
+          const found = listAnonSessions().find((s) => s.id === remoteId)
+          return {
+            status: 'regular',
+            remoteId,
+            title: found?.title ?? undefined,
+            lastMessageAt: found ? new Date(found.updatedAt) : undefined,
+          }
+        }
         const sessions = await listSessions()
         const found = sessions.find((s) => s.id === remoteId)
         return {

@@ -1,5 +1,6 @@
 import type { ChatModelAdapter, ChatModelRunOptions, ThreadMessage } from '@assistant-ui/react'
 import { sendMessage } from '@/lib/api'
+import { recordAnonSession } from '@/lib/anon-sessions'
 
 // Extract the text + first image (as a base64 data URL) from the latest user turn.
 const lastUserInput = (messages: readonly ThreadMessage[]): { text: string; image?: string } => {
@@ -52,6 +53,9 @@ export class UrbanLabAdapter implements ChatModelAdapter {
     if (!content && !image) return
 
     const sessionId = await this.resolveSessionId()
+    // Persist anonymous sessions client-side so they survive a reload (the
+    // backend won't list ownerless sessions). No-op when authenticated.
+    recordAnonSession(sessionId, content)
     const response = await sendMessage(sessionId, content, image, abortSignal)
 
     const reader = response.body!.getReader()
