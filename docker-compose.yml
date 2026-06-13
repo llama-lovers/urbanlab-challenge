@@ -1,0 +1,73 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: ${DB_NAME:-hackathon}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    ports:
+      - '${DB_PORT:-5432}:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/db_init.sql:/docker-entrypoint-initdb.d/01_init.sql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-hackathon}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    ports:
+      - '8000:8000'
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-hackathon}
+      DEBUG: ${DEBUG:-false}
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - '5173:5173'
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      VITE_API_URL: http://localhost:8000
+    depends_on:
+      - backend
+
+  jupyter:
+    build: ./notebooks
+    ports:
+      - '8888:8888'
+    volumes:
+      - ./notebooks:/home/jovyan/work
+      - ./data:/home/jovyan/data
+    environment:
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-hackathon}
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-hackathon}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  pipeline:
+    build: ./pipeline
+    volumes:
+      - ./pipeline:/app
+      - ./data:/data
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-hackathon}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - pipeline
+
+volumes:
+  postgres_data:

@@ -1,0 +1,50 @@
+version: '3'
+
+tasks:
+  setup:
+    desc: Copy .env.example → .env, install pre-commit hooks, and build Docker images
+    cmds:
+      - cp -n .env.example .env || true
+      - uv tool run pre-commit install
+      - docker compose build
+
+  lint:
+    desc: Run all pre-commit checks against staged files (or all files with --all)
+    cmds:
+      - uv tool run pre-commit run {{.CLI_ARGS}}
+
+  run:
+    desc: Start all services (postgres, backend, frontend, jupyter)
+    cmds:
+      - docker compose up -d
+
+  stop:
+    desc: Stop all services
+    cmds:
+      - docker compose down
+
+  pipeline:
+    desc: Run the ETL pipeline (ingest → transform → load)
+    cmds:
+      - docker compose run --rm pipeline ./run.sh
+
+  logs:
+    desc: Follow service logs (task logs -- backend to filter by service)
+    cmds:
+      - docker compose logs -f {{.CLI_ARGS}}
+
+  db:
+    desc: Open a psql shell in the postgres container
+    cmds:
+      - docker compose exec postgres psql -U ${DB_USER:-postgres} -d ${DB_NAME:-hackathon}
+
+  notebook:
+    desc: Open JupyterLab in the browser
+    cmds:
+      - xdg-open http://localhost:8888 2>/dev/null || open http://localhost:8888 2>/dev/null || echo "Open http://localhost:8888 (token= hackathon)"
+
+  clean:
+    desc: Remove all containers and volumes (DESTRUCTIVE — deletes all data)
+    prompt: This will delete all Docker volumes and data. Continue?
+    cmds:
+      - docker compose down -v
