@@ -23,6 +23,37 @@ class Settings(BaseSettings):
     vision_llm_model: str = "glm-ocr"
     openai_api_key: str | None = None
 
+    # Auth
+    jwt_secret: str = "change-me-in-production"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60 * 24 * 7  # 1 week
+
+    # Model service — leave empty to use the built-in mock client
+    model_service_url: str = ""
+    model_service_api_key: str = ""
+    model_timeout_s: float = 60.0
+    history_limit: int = 20
+
+    # OpenRouter / OpenAI-compatible model
+    openrouter_api_key: str = ""
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str = "openai/gpt-4o-mini"
+    openrouter_send_app_headers: bool = True
+
+    # Qdrant
+    qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: str = ""
+    qdrant_collection: str = "urbanlab"
+
+    # RAG-augmented chat
+    rag_top_k: int = 5
+    rag_system_prompt: str = (
+        "Jesteś pomocnym asystentem UrbanLab Lublin. "
+        "Odpowiadaj wyłącznie na podstawie poniższego kontekstu. "
+        "Jeśli odpowiedź nie wynika z kontekstu, napisz że nie wiesz.\n\n"
+        "Kontekst:\n{context}"
+    )
+
     @field_validator("debug", mode="before")
     @classmethod
     def parse_debug(cls, value: Any) -> bool:
