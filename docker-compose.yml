@@ -46,6 +46,8 @@ services:
   ollama-qwen-chat:
     image: ollama/ollama:0.17.6
     entrypoint: ["/bin/sh", "-c"]
+    ports:
+      - '11434:11434'
     command: >
       "ollama serve &
       pid=$$!;
