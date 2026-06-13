@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import Base, engine
-from app.routers import data, geo
+from app.routers import assistant, data, geo
 
 
 @asynccontextmanager
@@ -27,6 +27,7 @@ app.add_middleware(
 
 app.include_router(data.router, prefix="/api/data", tags=["data"])
 app.include_router(geo.router, prefix="/api/geo", tags=["geo"])
+app.include_router(assistant.router, prefix="/api/assistant", tags=["assistant"])
 
 
 @app.get("/health")
