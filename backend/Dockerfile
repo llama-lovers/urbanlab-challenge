@@ -5,6 +5,14 @@ ENV UV_SYSTEM_PYTHON=1
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        poppler-utils \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+        tesseract-ocr-pol \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml .
 RUN uv pip install -e ".[dev]"
 
