@@ -166,6 +166,12 @@ class OpenAICompatibleModelClient:
         if tools:
             body["tools"] = tools
 
+        logger.info(
+            "OpenRouter request: model=%s messages=%d tools=%d",
+            self._model, len(messages), len(tools) if tools else 0,
+        )
+        logger.debug("OpenRouter messages: %s", json.dumps(messages, ensure_ascii=False))
+
         async with httpx.AsyncClient(timeout=settings.model_timeout_s) as client:
             async with client.stream(
                 "POST", self._endpoint, json=body, headers=self._headers()
@@ -282,6 +288,12 @@ class OllamaChatModelClient:
                 ollama_messages.append(msg)
 
         body["messages"] = ollama_messages
+
+        logger.info(
+            "Ollama request: model=%s messages=%d",
+            settings.chat_llm_model, len(ollama_messages),
+        )
+        logger.debug("Ollama messages: %s", json.dumps(ollama_messages, ensure_ascii=False))
 
         try:
             async with httpx.AsyncClient(timeout=settings.model_timeout_s) as client:

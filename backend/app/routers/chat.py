@@ -174,8 +174,6 @@ async def send_message(
 
         try:
             async for chunk in model_client.stream(augmented_messages, str(session_id)):
-                if await request.is_disconnected():
-                    return
                 if isinstance(chunk, DeltaChunk):
                     full_text += chunk.text
                     yield f"event: delta\ndata: {json.dumps({'text': chunk.text})}\n\n"
