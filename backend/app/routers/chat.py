@@ -9,9 +9,12 @@ SSE event contract (POST /sessions/{id}/messages):
 """
 
 import json
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+
+logger = logging.getLogger(__name__)
 from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +33,7 @@ from app.models.chat import (
 from app.models.user import User
 from app.services.auth import get_current_user
 from app.services.model_client import DeltaChunk, SourcesChunk, get_model_client
+from app.services.rag_service import get_rag_service
 
 router = APIRouter()
 
@@ -131,14 +135,32 @@ async def send_message(
         for m in reversed(history_result.scalars().all())
     ]
 
+    try:
+        rag_context, rag_sources = await get_rag_service().retrieve(payload.content)
+    except Exception:
+        rag_context, rag_sources = "", []
+
+    if rag_context:
+        augmented_messages: list[dict] = [
+            {"role": "system", "content": settings.rag_system_prompt.format(context=rag_context)},
+            *messages_for_model,
+        ]
+    else:
+        augmented_messages = messages_for_model
+
     model_client = get_model_client()
+
+    logger.info("RAG context retrieved: %d sources", len(rag_sources))
 
     async def generate():
         full_text = ""
-        final_sources = None
+        final_sources: list[dict] | None = rag_sources or None
+
+        if rag_sources:
+            yield f"event: sources\ndata: {json.dumps(rag_sources)}\n\n"
 
         try:
-            async for chunk in model_client.stream(messages_for_model, str(session_id)):
+            async for chunk in model_client.stream(augmented_messages, str(session_id)):
                 if await request.is_disconnected():
                     return
                 if isinstance(chunk, DeltaChunk):

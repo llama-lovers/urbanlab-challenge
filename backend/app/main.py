@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,6 +8,11 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.database import Base, engine
+
+logging.basicConfig(
+    level=logging.DEBUG if settings.debug else logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s — %(message)s",
+)
 from app.limiter import limiter
 from app.models import chat  # noqa: F401 — registers chat ORM models with Base
 from app.models import user  # noqa: F401 — registers user ORM model with Base
