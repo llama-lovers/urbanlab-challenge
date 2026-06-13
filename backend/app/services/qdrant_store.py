@@ -10,6 +10,7 @@ Expected payload per point (set by the pipeline or the assistant indexing endpoi
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
@@ -25,6 +26,8 @@ from qdrant_client.models import (
 
 from app.config import settings
 from app.services.document_ai import EmbeddingService, RerankerService, SearchMatch
+
+logger = logging.getLogger(__name__)
 
 
 def _to_uuid(chunk_id: str) -> str:
@@ -51,6 +54,7 @@ class QdrantRagStore:
 
     def _get_client(self) -> AsyncQdrantClient:
         if self._client is None:
+            logger.info("Connecting to Qdrant at %s, collection=%s", settings.qdrant_url, settings.qdrant_collection)
             self._client = AsyncQdrantClient(
                 url=settings.qdrant_url,
                 api_key=settings.qdrant_api_key or None,
@@ -96,6 +100,8 @@ class QdrantRagStore:
         source_id: str | None = None,
     ) -> tuple[list[SearchMatch], list[str]]:
         client = self._get_client()
+
+        logger.debug("Embedding query for Qdrant search: %.80r", question)
         query_vector = self._embedding_service.embed_texts([question])[0]
 
         query_filter: Filter | None = None
@@ -110,6 +116,10 @@ class QdrantRagStore:
             else top_k
         )
 
+        logger.debug(
+            "Querying Qdrant collection=%s limit=%d filter=%s",
+            settings.qdrant_collection, candidate_limit, source_id,
+        )
         try:
             response = await client.query_points(
                 collection_name=settings.qdrant_collection,
@@ -119,7 +129,10 @@ class QdrantRagStore:
                 with_payload=True,
             )
         except Exception as exc:
+            logger.error("Qdrant search failed (collection=%s url=%s): %s", settings.qdrant_collection, settings.qdrant_url, exc)
             return [], [f"Qdrant search failed: {exc}"]
+
+        logger.info("Qdrant returned %d candidates for query %.60r", len(response.points), question)
 
         matches = [
             SearchMatch(
@@ -138,6 +151,10 @@ class QdrantRagStore:
                 warnings.append(self._reranker_service.warning)
         else:
             matches = matches[:top_k]
+
+        logger.info("RAG search done: %d matches after rerank/trim (top_k=%d)", len(matches), top_k)
+        if matches:
+            logger.debug("Top match score=%.4f text=%.80r", matches[0].score, matches[0].text)
 
         return matches, warnings
 

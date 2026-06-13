@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import logging
 import math
 import re
 from dataclasses import dataclass
@@ -12,6 +13,8 @@ import httpx
 from PIL import Image, UnidentifiedImageError
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -204,6 +207,7 @@ class EmbeddingService:
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if settings.embedding_service_url:
+            logger.debug("Embedding %d text(s) via %s", len(texts), settings.embedding_service_url)
             try:
                 with httpx.Client(timeout=60) as client:
                     response = client.post(
@@ -212,9 +216,13 @@ class EmbeddingService:
                     )
                     response.raise_for_status()
                 self._load_warning = None
+                logger.debug("Embedding OK, got %d vectors", len(response.json()["embeddings"]))
                 return response.json()["embeddings"]
-            except Exception as exc:  # pragma: no cover - depends on model service availability
+            except Exception as exc:
                 self._load_warning = f"Embedding service unavailable, using hashing fallback: {exc}"
+                logger.warning("Embedding service error (%s): %s — falling back to hash embeddings", settings.embedding_service_url, exc)
+        else:
+            logger.warning("No EMBEDDING_SERVICE_URL configured — using hash embeddings (results will be meaningless)")
 
         return [self._hash_embedding(text) for text in texts]
 
@@ -294,8 +302,10 @@ class RerankerService:
 
     def rerank(self, question: str, matches: list[SearchMatch], top_k: int) -> list[SearchMatch]:
         if not settings.reranker_enabled or not settings.reranker_service_url or not matches:
+            logger.debug("Reranker skipped (enabled=%s, url=%s, matches=%d)", settings.reranker_enabled, settings.reranker_service_url, len(matches))
             return matches[:top_k]
 
+        logger.debug("Reranking %d candidates → top %d via %s", len(matches), top_k, settings.reranker_service_url)
         try:
             with httpx.Client(timeout=120) as client:
                 response = client.post(
@@ -305,8 +315,10 @@ class RerankerService:
                 response.raise_for_status()
             scores = response.json()["scores"]
             self._load_warning = None
-        except Exception as exc:  # pragma: no cover - depends on model service availability
+            logger.debug("Reranker OK")
+        except Exception as exc:
             self._load_warning = f"Reranker service unavailable, using embedding similarity order: {exc}"
+            logger.warning("Reranker error (%s): %s — using embedding score order", settings.reranker_service_url, exc)
             return matches[:top_k]
 
         scored_matches = [
