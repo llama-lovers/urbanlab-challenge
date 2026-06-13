@@ -145,12 +145,14 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - '5173:5173'
+      - '3000:3000'
     volumes:
       - ./frontend:/app
       - /app/node_modules
+      - /app/.next
     environment:
-      VITE_API_URL: http://localhost:8000
+      # Read by the browser, so it must point at the host-published backend port.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     depends_on:
       - backend
 
