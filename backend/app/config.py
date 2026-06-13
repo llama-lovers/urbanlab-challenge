@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     # How many recent user turns to fold into the retrieval query so follow-up
     # questions ("a ile to kosztuje?") search against the real topic, not just themselves.
     rag_query_context_turns: int = 3
+    # Parent/child expansion: each indexed node is a paragraph of a page. When a
+    # paragraph matches, pull its whole parent page (all sibling chunks sharing the
+    # page key, ordered by chunk_index) so the model sees the full page, not a fragment.
+    rag_expand_to_page: bool = True
+    rag_page_key: str = "url"  # payload field that identifies the parent page
+    rag_max_page_chunks: int = 60  # safety cap on chunks pulled per page
     system_prompt: str = (
         "Jesteś pomocnym asystentem UrbanLab Lublin — pomagasz mieszkańcom Lublina "
         "załatwiać sprawy urzędowe. "
