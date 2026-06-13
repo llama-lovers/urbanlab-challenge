@@ -31,11 +31,19 @@ from app.models.chat import (
     SessionRead,
 )
 from app.models.user import User
-from app.services.auth import get_current_user
+from app.services.auth import get_current_user, get_optional_user
 from app.services.model_client import DeltaChunk, SourcesChunk, get_model_client
 from app.services.rag_service import get_rag_service
 
 router = APIRouter()
+
+
+def _check_session_access(session: ChatSession | None, current_user: User | None) -> None:
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.user_id is not None:
+        if current_user is None or session.user_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Session not found")
 
 
 def _make_title(content: str, max_len: int = 60) -> str:
@@ -48,10 +56,10 @@ def _make_title(content: str, max_len: int = 60) -> str:
 
 @router.post("/sessions", response_model=SessionRead, status_code=201)
 async def create_session(
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
-    session = ChatSession(user_id=current_user.id)
+    session = ChatSession(user_id=current_user.id if current_user else None)
     db.add(session)
     await db.commit()
     await db.refresh(session)
@@ -60,9 +68,11 @@ async def create_session(
 
 @router.get("/sessions", response_model=list[SessionListItem])
 async def list_sessions(
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if current_user is None:
+        return []
     result = await db.execute(
         select(ChatSession)
         .where(ChatSession.user_id == current_user.id)
@@ -74,17 +84,13 @@ async def list_sessions(
 @router.get("/sessions/{session_id}/messages", response_model=list[MessageRead])
 async def get_messages(
     session_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
     session_result = await db.execute(
-        select(ChatSession).where(
-            ChatSession.id == session_id,
-            ChatSession.user_id == current_user.id,
-        )
+        select(ChatSession).where(ChatSession.id == session_id)
     )
-    if session_result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    _check_session_access(session_result.scalar_one_or_none(), current_user)
 
     result = await db.execute(
         select(ChatMessage)
@@ -106,18 +112,14 @@ async def send_message(
     request: Request,
     session_id: uuid.UUID,
     payload: ChatRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(ChatSession).where(
-            ChatSession.id == session_id,
-            ChatSession.user_id == current_user.id,
-        )
+        select(ChatSession).where(ChatSession.id == session_id)
     )
     session = result.scalar_one_or_none()
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    _check_session_access(session, current_user)
     needs_title = session.title is None
 
     user_msg = ChatMessage(session_id=session_id, role="user", content=payload.content)
@@ -209,17 +211,13 @@ async def send_message(
 @router.delete("/sessions/{session_id}", status_code=204)
 async def delete_session(
     session_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(ChatSession).where(
-            ChatSession.id == session_id,
-            ChatSession.user_id == current_user.id,
-        )
+        select(ChatSession).where(ChatSession.id == session_id)
     )
     session = result.scalar_one_or_none()
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    _check_session_access(session, current_user)
     await db.delete(session)
     await db.commit()

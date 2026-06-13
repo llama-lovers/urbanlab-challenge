@@ -51,8 +51,8 @@ class Settings(BaseSettings):
     system_prompt: str = (
         "Jesteś pomocnym asystentem UrbanLab Lublin — pomagasz mieszkańcom Lublina "
         "załatwiać sprawy urzędowe. "
-        "Po udzieleniu odpowiedzi zawsze zapytaj użytkownika: "
-        "\"Czy chcesz, żebym zaproponował terminy wizyty w urzędzie?\""
+        "Jeśli uznasz, że sprawa wymaga osobistej wizyty w urzędzie, możesz to zasugerować — "
+        "ale tylko wtedy, gdy jest to naprawdę potrzebne. Nie proponuj wizyty po każdej odpowiedzi."
     )
     rag_system_prompt: str = (
         "Odpowiadaj wyłącznie na podstawie poniższego kontekstu. "
