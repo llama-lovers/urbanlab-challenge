@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     model_timeout_s: float = 60.0
     history_limit: int = 20
 
+    # Local generative chat model
+    chat_llm_provider: str = "ollama"
+    chat_llm_base_url: str | None = "http://ollama-qwen-chat:11434"
+    chat_llm_model: str = "qwen3.5:4b"
+
     # OpenRouter / OpenAI-compatible model
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
@@ -66,6 +71,7 @@ class Settings(BaseSettings):
     @field_validator(
         "embedding_service_url",
         "reranker_service_url",
+        "chat_llm_base_url",
         "vision_llm_base_url",
         "vision_llm_api_key",
         "openai_api_key",

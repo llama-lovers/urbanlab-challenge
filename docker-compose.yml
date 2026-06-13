@@ -43,6 +43,27 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  ollama-qwen-chat:
+    image: ollama/ollama:latest
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "ollama serve &
+      pid=$$!;
+      until ollama list >/dev/null 2>&1; do sleep 1; done;
+      ollama pull \"$${CHAT_LLM_MODEL}\";
+      wait $$pid"
+    environment:
+      CHAT_LLM_MODEL: ${CHAT_LLM_MODEL:-qwen3.5:4b}
+    volumes:
+      - ollama_qwen_chat_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama show \"$${CHAT_LLM_MODEL}\" >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
   embedding-minilm:
     build: ./model-services/text-model
     environment:
@@ -83,6 +104,9 @@ services:
       DEBUG: ${DEBUG:-false}
       MODEL_SERVICE_URL: ${MODEL_SERVICE_URL:-}
       MODEL_SERVICE_API_KEY: ${MODEL_SERVICE_API_KEY:-}
+      CHAT_LLM_PROVIDER: ${CHAT_LLM_PROVIDER:-ollama}
+      CHAT_LLM_BASE_URL: ${CHAT_LLM_BASE_URL:-http://ollama-qwen-chat:11434}
+      CHAT_LLM_MODEL: ${CHAT_LLM_MODEL:-qwen3.5:4b}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-4o-mini}
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
@@ -107,6 +131,8 @@ services:
       qdrant:
         condition: service_started
       ollama-glm-ocr:
+        condition: service_healthy
+      ollama-qwen-chat:
         condition: service_healthy
       embedding-minilm:
         condition: service_healthy
@@ -157,5 +183,6 @@ volumes:
   postgres_data:
   qdrant_data:
   ollama_glm_ocr_data:
+  ollama_qwen_chat_data:
   embedding_minilm_data:
   reranker_polish_roberta_data:
