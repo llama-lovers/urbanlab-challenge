@@ -1,44 +1,70 @@
-"use client";
+'use client'
 
-import { useMemo } from "react";
+import { useMemo } from 'react'
 import {
   AssistantRuntimeProvider,
   SimpleImageAttachmentAdapter,
+  useAui,
   useLocalRuntime,
-} from "@assistant-ui/react";
-import { UrbanLabAdapter } from "@/lib/chat-adapter";
-import { WhisperDictationAdapter } from "@/lib/dictation-adapter";
-import { AuthProvider, AuthControls } from "@/components/auth/auth-gate";
-import { Thread } from "@/components/assistant-ui/thread";
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
-import { ThreadListSidebar } from "@/components/assistant-ui/threadlist-sidebar";
-import { Separator } from "@/components/ui/separator";
+  useRemoteThreadListRuntime,
+} from '@assistant-ui/react'
+import { UrbanLabAdapter } from '@/lib/chat-adapter'
+import { useBackendThreadListAdapter } from '@/lib/thread-list-adapter'
+import { WhisperDictationAdapter } from '@/lib/dictation-adapter'
+import { AuthProvider, AuthControls, useAuth } from '@/components/auth/auth-gate'
+import { Thread } from '@/components/assistant-ui/thread'
+import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
+import { ThreadListSidebar } from '@/components/assistant-ui/threadlist-sidebar'
+import { Separator } from '@/components/ui/separator'
 import {
   Breadcrumb,
   BreadcrumbItem,
   BreadcrumbList,
   BreadcrumbPage,
-} from "@/components/ui/breadcrumb";
+} from '@/components/ui/breadcrumb'
 
 export const Assistant = () => {
   return (
     <AuthProvider>
       <Chat />
     </AuthProvider>
-  );
-};
+  )
+}
+
+/**
+ * Per-thread runtime. The backend session id is the thread's `remoteId`, which
+ * the thread-list runtime resolves (creating a session lazily on the first
+ * message via the adapter's `initialize`). `useAui().threadListItem()` gives us
+ * that id race-free once initialization has resolved.
+ */
+const useUrbanLabThreadRuntime = () => {
+  const aui = useAui()
+  const adapter = useMemo(
+    () =>
+      new UrbanLabAdapter(async () => {
+        const { remoteId } = await aui.threadListItem().initialize()
+        return remoteId
+      }),
+    [aui],
+  )
+  const attachments = useMemo(() => new SimpleImageAttachmentAdapter(), [])
+  const dictation = useMemo(() => new WhisperDictationAdapter(), [])
+  return useLocalRuntime(adapter, { adapters: { attachments, dictation } })
+}
 
 const Chat = () => {
-  const adapter = useMemo(() => new UrbanLabAdapter(), []);
-  const attachments = useMemo(() => new SimpleImageAttachmentAdapter(), []);
-  const dictation = useMemo(() => new WhisperDictationAdapter(), []);
-  const runtime = useLocalRuntime(adapter, {
-    adapters: { attachments, dictation },
-  });
+  const { user } = useAuth()
+  // Remount on auth change so the thread list re-fetches with the new token
+  // (anonymous → logged-in shows that account's saved sessions).
+  return <ChatRuntime key={user?.id ?? 'anon'} />
+}
+
+const ChatRuntime = () => {
+  const threadListAdapter = useBackendThreadListAdapter()
+  const runtime = useRemoteThreadListRuntime({
+    runtimeHook: useUrbanLabThreadRuntime,
+    adapter: threadListAdapter,
+  })
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -67,5 +93,5 @@ const Chat = () => {
         </div>
       </SidebarProvider>
     </AssistantRuntimeProvider>
-  );
-};
+  )
+}

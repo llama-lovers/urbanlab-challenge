@@ -3,74 +3,112 @@
  * Handles JWT auth + chat sessions + the SSE message stream.
  */
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
 // Whisper speech-to-text service (POST /asr -> { text, segments }).
-export const WHISPER_URL =
-  process.env.NEXT_PUBLIC_WHISPER_URL ?? "http://10.8.47.10:9000";
+export const WHISPER_URL = process.env.NEXT_PUBLIC_WHISPER_URL ?? 'http://10.8.47.10:9000'
 
-const TOKEN_KEY = "urbanlab_token";
+const TOKEN_KEY = 'urbanlab_token'
 
 export const getToken = (): string | null =>
-  typeof window === "undefined" ? null : localStorage.getItem(TOKEN_KEY);
+  typeof window === 'undefined' ? null : localStorage.getItem(TOKEN_KEY)
 
-export const setToken = (token: string): void => localStorage.setItem(TOKEN_KEY, token);
+export const setToken = (token: string): void => localStorage.setItem(TOKEN_KEY, token)
 
-export const clearToken = (): void => localStorage.removeItem(TOKEN_KEY);
+export const clearToken = (): void => localStorage.removeItem(TOKEN_KEY)
 
 const authHeaders = (): Record<string, string> => {
-  const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-};
+  const token = getToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
 
 async function asError(res: Response, fallback: string): Promise<Error> {
-  const body = await res.json().catch(() => null);
-  const detail =
-    body?.detail && typeof body.detail === "string" ? body.detail : fallback;
-  return new Error(detail);
+  const body = await res.json().catch(() => null)
+  const detail = body?.detail && typeof body.detail === 'string' ? body.detail : fallback
+  return new Error(detail)
 }
 
 // ---- auth ----
 
-export type AuthUser = { id: number; email: string; created_at: string };
+export type AuthUser = { id: number; email: string; created_at: string }
 
 async function authenticate(
-  path: "login" | "register",
+  path: 'login' | 'register',
   email: string,
   password: string,
 ): Promise<string> {
   const res = await fetch(`${API_URL}/api/auth/${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
-  });
-  if (!res.ok) throw await asError(res, `${path} failed`);
-  const { access_token } = (await res.json()) as { access_token: string };
-  setToken(access_token);
-  return access_token;
+  })
+  if (!res.ok) throw await asError(res, `${path} failed`)
+  const { access_token } = (await res.json()) as { access_token: string }
+  setToken(access_token)
+  return access_token
 }
 
-export const login = (email: string, password: string) =>
-  authenticate("login", email, password);
+export const login = (email: string, password: string) => authenticate('login', email, password)
 export const register = (email: string, password: string) =>
-  authenticate("register", email, password);
+  authenticate('register', email, password)
 
 export async function me(): Promise<AuthUser> {
-  const res = await fetch(`${API_URL}/api/auth/me`, { headers: authHeaders() });
-  if (!res.ok) throw await asError(res, "Not authenticated");
-  return res.json();
+  const res = await fetch(`${API_URL}/api/auth/me`, { headers: authHeaders() })
+  if (!res.ok) throw await asError(res, 'Not authenticated')
+  return res.json()
 }
 
 // ---- chat ----
 
 export async function createSession(): Promise<string> {
   const res = await fetch(`${API_URL}/api/chat/sessions`, {
-    method: "POST",
+    method: 'POST',
     headers: authHeaders(),
-  });
-  if (!res.ok) throw await asError(res, "Could not create session");
-  const { id } = (await res.json()) as { id: string };
-  return id;
+  })
+  if (!res.ok) throw await asError(res, 'Could not create session')
+  const { id } = (await res.json()) as { id: string }
+  return id
+}
+
+export type SessionListItem = {
+  id: string
+  title: string | null
+  updated_at: string
+}
+
+/** All chat sessions for the current user (empty list for anonymous users). */
+export async function listSessions(): Promise<SessionListItem[]> {
+  const res = await fetch(`${API_URL}/api/chat/sessions`, {
+    headers: authHeaders(),
+  })
+  if (!res.ok) throw await asError(res, 'Could not load sessions')
+  return res.json()
+}
+
+export type StoredMessage = {
+  id: number
+  session_id: string
+  role: 'user' | 'assistant'
+  content: string
+  sources: { title?: string; url?: string }[] | null
+  created_at: string
+}
+
+/** Full message history for a session, oldest first. */
+export async function getSessionMessages(sessionId: string): Promise<StoredMessage[]> {
+  const res = await fetch(`${API_URL}/api/chat/sessions/${sessionId}/messages`, {
+    headers: authHeaders(),
+  })
+  if (!res.ok) throw await asError(res, 'Could not load messages')
+  return res.json()
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/chat/sessions/${sessionId}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  })
+  if (!res.ok && res.status !== 404) throw await asError(res, 'Could not delete session')
 }
 
 /**
@@ -84,23 +122,23 @@ export async function sendMessage(
   signal?: AbortSignal,
 ): Promise<Response> {
   const res = await fetch(`${API_URL}/api/chat/sessions/${sessionId}/messages`, {
-    method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify(image ? { content, image } : { content }),
     signal,
-  });
-  if (!res.ok || !res.body) throw await asError(res, `Request failed (${res.status})`);
-  return res;
+  })
+  if (!res.ok || !res.body) throw await asError(res, `Request failed (${res.status})`)
+  return res
 }
 
 // ---- speech-to-text ----
 
 /** Send a recorded audio blob to Whisper and return the transcript text. */
 export async function transcribeAudio(audio: Blob): Promise<string> {
-  const form = new FormData();
-  form.append("audio_file", audio, "recording.webm");
-  const res = await fetch(`${WHISPER_URL}/asr`, { method: "POST", body: form });
-  if (!res.ok) throw await asError(res, `Transcription failed (${res.status})`);
-  const data = (await res.json()) as { text?: string };
-  return data.text ?? "";
+  const form = new FormData()
+  form.append('audio_file', audio, 'recording.webm')
+  const res = await fetch(`${WHISPER_URL}/asr`, { method: 'POST', body: form })
+  if (!res.ok) throw await asError(res, `Transcription failed (${res.status})`)
+  const data = (await res.json()) as { text?: string }
+  return data.text ?? ''
 }
