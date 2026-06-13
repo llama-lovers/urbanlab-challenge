@@ -65,8 +65,8 @@ class Settings(BaseSettings):
         "ale tylko wtedy, gdy jest to naprawdę potrzebne. Nie proponuj wizyty po każdej odpowiedzi."
     )
     rag_system_prompt: str = (
-        "Odpowiadaj wyłącznie na podstawie poniższego kontekstu. "
-        "Jeśli odpowiedź nie wynika z kontekstu, napisz że nie wiesz.\n\n"
+        "Gdy to możliwe, odpowiadaj na podstawie poniższego kontekstu. "
+        "Jeśli kontekst nie zawiera odpowiedzi, odpowiedz na podstawie swojej wiedzy ogólnej.\n\n"
         "Kontekst:\n{context}"
     )
 

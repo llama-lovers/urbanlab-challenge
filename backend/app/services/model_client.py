@@ -170,7 +170,17 @@ class OpenAICompatibleModelClient:
             async with client.stream(
                 "POST", self._endpoint, json=body, headers=self._headers()
             ) as resp:
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    body_bytes = await resp.aread()
+                    error_body = body_bytes.decode(errors="replace")
+                    logger.error(
+                        "OpenRouter error %d: %s", resp.status_code, error_body
+                    )
+                    raise httpx.HTTPStatusError(
+                        f"HTTP {resp.status_code}: {error_body}",
+                        request=resp.request,
+                        response=resp,
+                    )
                 async for line in resp.aiter_lines():
                     if not line or not line.startswith("data:"):
                         continue
@@ -280,7 +290,17 @@ class OllamaChatModelClient:
                     f"{settings.chat_llm_base_url.rstrip('/')}/api/chat",
                     json=body,
                 ) as resp:
-                    resp.raise_for_status()
+                    if resp.status_code >= 400:
+                        body_bytes = await resp.aread()
+                        error_body = body_bytes.decode(errors="replace")
+                        logger.error(
+                            "Ollama error %d: %s", resp.status_code, error_body
+                        )
+                        raise httpx.HTTPStatusError(
+                            f"HTTP {resp.status_code}: {error_body}",
+                            request=resp.request,
+                            response=resp,
+                        )
                     async for line in resp.aiter_lines():
                         if not line:
                             continue
@@ -292,8 +312,8 @@ class OllamaChatModelClient:
                         content = payload.get("message", {}).get("content")
                         if content:
                             yield DeltaChunk(text=content)
-        except (httpx.ConnectError, httpx.HTTPStatusError):
-            logger.warning("Ollama chat service unavailable; falling back to mock model")
+        except (httpx.ConnectError, httpx.HTTPStatusError) as exc:
+            logger.warning("Ollama chat service unavailable (%s); falling back to mock model", exc)
             async for chunk in MockModelClient().stream(messages, session_id):
                 yield chunk
 
