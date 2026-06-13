@@ -11,8 +11,12 @@ const lastUserInput = (messages: readonly ThreadMessage[]): { text: string; imag
       .map((p) => (p.type === 'text' ? p.text : ''))
       .join('')
       .trim()
+    // The attachment adapter (SimpleImageAttachmentAdapter) keeps the image on
+    // `message.attachments[].content`, not on `message.content`, so we scan
+    // both — otherwise attached images never reach the backend.
+    const parts = [...m.content, ...m.attachments.flatMap((a) => a.content)]
     let image: string | undefined
-    for (const p of m.content) {
+    for (const p of parts) {
       if (p.type === 'image' && p.image) {
         image = p.image
         break
