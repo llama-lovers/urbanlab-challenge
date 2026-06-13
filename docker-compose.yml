@@ -54,6 +54,8 @@ services:
       wait $$pid"
     environment:
       CHAT_LLM_MODEL: ${CHAT_LLM_MODEL:-qwen3.5:4b}
+      OLLAMA_FLASH_ATTENTION: "0"
+      OLLAMA_KV_CACHE_TYPE: "f16"
     volumes:
       - ollama_qwen_chat_data:/root/.ollama
     healthcheck:
