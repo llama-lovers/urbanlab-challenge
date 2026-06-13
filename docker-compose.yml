@@ -143,16 +143,14 @@ services:
     restart: unless-stopped
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        # NEXT_PUBLIC_* is inlined at build time and read by the browser, so it
+        # must point at the host-reachable backend URL (the server's LAN IP).
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://10.8.47.10:8000}
     ports:
       - '3000:3000'
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-      - /app/.next
-    environment:
-      # Read by the browser, so it must point at the host-published backend port.
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     depends_on:
       - backend
 
