@@ -43,21 +43,19 @@ class RagService:
         if settings.rag_expand_to_page:
             matches = await self._store.expand_to_pages(matches)
 
-        parts = []
+        # Every paragraph becomes its own numbered context block with its own
+        # source — so each akapit is traceable and nothing is left unsourced.
+        parts: list[str] = []
+        sources: list[dict] = []
         for i, m in enumerate(matches, 1):
-            label = m.metadata.get("url") or m.metadata.get("source_id") or ""
-            parts.append(f"[{i}] {label}\n{m.text}" if label else f"[{i}]\n{m.text}")
+            title = m.metadata.get("title") or m.metadata.get("source_id") or "BIP Lublin"
+            url = m.metadata.get("url") or ""
+            label = url or title
+            parts.append(f"[{i}] {label}\n{m.text}")
+            sources.append({"title": title, "url": url})
 
         context = "\n\n---\n\n".join(parts)
-        logger.info("RAG context built: %d sources, %d chars", len(matches), len(context))
-
-        sources = [
-            {
-                "title": m.metadata.get("title") or m.metadata.get("source_id") or f"Wynik {i}",
-                "url": m.metadata.get("url", ""),
-            }
-            for i, m in enumerate(matches, 1)
-        ]
+        logger.info("RAG context built: %d paragraphs, %d chars", len(matches), len(context))
 
         return context, sources
 

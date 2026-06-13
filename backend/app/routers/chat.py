@@ -2,8 +2,9 @@
 Chat endpoints — sessions, message history, and SSE streaming.
 
 SSE event contract (POST /sessions/{id}/messages):
-    event: delta    data: {"text": "..."}         repeated per chunk
-    event: sources  data: [{"title","url"}, ...]   once, if model returns citations
+    event: status   data: {"text": "..."}          progress hints (searching / generating)
+    event: delta    data: {"text": "..."}          repeated per chunk
+    event: sources  data: [{"title","url"}, ...]    once, one entry per context paragraph
     event: done     data: {"message_id": int}       terminal
     event: error    data: {"detail": "..."}         on failure
 """
@@ -146,43 +147,49 @@ async def send_message(
             ],
         }
 
-    rag_context, rag_sources = "", []
-    # One LLM call builds a clean standalone search query (and gates RAG): it
-    # expands follow-ups with context and drops junk turns that would otherwise
-    # poison the embedding. None -> this turn needs no knowledge-base lookup.
-    if settings.rag_gate_enabled:
-        retrieval_query = await build_rag_query(messages_for_model, payload.content)
-    else:
-        retrieval_query = payload.content
-
-    if retrieval_query:
-        try:
-            rag_context, rag_sources = await get_rag_service().retrieve(retrieval_query)
-        except Exception as rag_exc:
-            logger.error(
-                "RAG retrieve failed, proceeding without context: %s", rag_exc, exc_info=True
-            )
-            rag_context, rag_sources = "", []
-
-    system_content = settings.system_prompt
-    if rag_context:
-        system_content += "\n\n" + settings.rag_system_prompt.format(context=rag_context)
-
-    augmented_messages: list[dict] = [
-        {"role": "system", "content": system_content},
-        *messages_for_model,
-    ]
-
     model_client = get_model_client()
-
-    logger.info("RAG context retrieved: %d sources", len(rag_sources))
 
     async def generate():
         full_text = ""
-        final_sources: list[dict] | None = rag_sources or None
 
+        # Tell the client we're working before the (slow) query-build + retrieval,
+        # so the UI can show a "searching" indicator immediately.
+        yield f"event: status\ndata: {json.dumps({'text': 'Szukam w bazie wiedzy Lublina…'})}\n\n"
+
+        rag_context, rag_sources = "", []
+        # One LLM call builds a clean standalone search query (and gates RAG): it
+        # expands follow-ups with context and drops junk turns that would otherwise
+        # poison the embedding. None -> this turn needs no knowledge-base lookup.
+        if settings.rag_gate_enabled:
+            retrieval_query = await build_rag_query(messages_for_model, payload.content)
+        else:
+            retrieval_query = payload.content
+
+        if retrieval_query:
+            try:
+                rag_context, rag_sources = await get_rag_service().retrieve(retrieval_query)
+            except Exception as rag_exc:
+                logger.error(
+                    "RAG retrieve failed, proceeding without context: %s", rag_exc, exc_info=True
+                )
+                rag_context, rag_sources = "", []
+
+        logger.info("RAG context retrieved: %d sources", len(rag_sources))
+
+        system_content = settings.system_prompt
+        if rag_context:
+            system_content += "\n\n" + settings.rag_system_prompt.format(context=rag_context)
+        augmented_messages: list[dict] = [
+            {"role": "system", "content": system_content},
+            *messages_for_model,
+        ]
+
+        final_sources: list[dict] | None = rag_sources or None
         if rag_sources:
             yield f"event: sources\ndata: {json.dumps(rag_sources)}\n\n"
+
+        # Switch the status from searching to generating.
+        yield f"event: status\ndata: {json.dumps({'text': 'Generuję odpowiedź…'})}\n\n"
 
         try:
             async for chunk in model_client.stream(augmented_messages, str(session_id)):

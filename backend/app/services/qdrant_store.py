@@ -196,12 +196,12 @@ class QdrantRagStore:
     async def expand_to_pages(self, matches: list[SearchMatch]) -> list[SearchMatch]:
         """
         Each match is a paragraph-level node. Expand every matched paragraph to its
-        full parent page — all sibling chunks that share the page key, concatenated
-        in `chunk_index` order — so the model sees the whole page, not a fragment.
+        full parent page — pull all sibling chunks that share the page key — but keep
+        each paragraph as its OWN match (ordered by chunk_index) so the model sees the
+        whole page AND every paragraph carries its own source (url/title).
 
-        Pages are returned best-match-first and de-duplicated; the best paragraph's
-        metadata and score represent the page. Matches without a page key are kept
-        as-is.
+        Pages are processed best-match-first; paragraphs are de-duplicated by id.
+        Matches without a page key are kept as-is.
         """
         if not matches:
             return matches
@@ -209,7 +209,7 @@ class QdrantRagStore:
         client = self._get_client()
         page_key = settings.rag_page_key
 
-        # Pick unique pages best-match-first; remember each page's representative match.
+        # Unique pages, best-match-first; remember the representative match per page.
         seen_pages: set[str] = set()
         plan: list[tuple[SearchMatch, str | None, str | None]] = []
         for m in matches:
@@ -234,27 +234,34 @@ class QdrantRagStore:
         )
 
         expanded: list[SearchMatch] = []
-        for (m, _field, _value), siblings in zip(plan, fetches, strict=False):
+        seen_ids: set[str] = set()
+        for (rep, _field, _value), siblings in zip(plan, fetches, strict=False):
             if not siblings:
-                expanded.append(m)
+                if rep.id not in seen_ids:
+                    seen_ids.add(rep.id)
+                    expanded.append(rep)
                 continue
             siblings.sort(key=lambda p: p.payload.get("chunk_index") or 0)
-            page_text = "\n\n".join(
-                p.payload.get("text", "") for p in siblings if p.payload.get("text")
-            )
-            expanded.append(
-                SearchMatch(
-                    id=m.id,
-                    text=page_text or m.text,
-                    score=m.score,
-                    metadata=m.metadata,
+            for p in siblings:
+                pid = str(p.id)
+                text = p.payload.get("text", "")
+                if pid in seen_ids or not text:
+                    continue
+                seen_ids.add(pid)
+                expanded.append(
+                    SearchMatch(
+                        id=pid,
+                        text=text,
+                        score=rep.score,
+                        metadata={k: v for k, v in p.payload.items() if k != "text"},
+                    )
                 )
-            )
 
         logger.info(
-            "Parent expansion: %d paragraph matches -> %d unique pages",
+            "Parent expansion: %d matches -> %d paragraphs across %d pages",
             len(matches),
             len(expanded),
+            len(seen_pages),
         )
         return expanded
 
