@@ -13,8 +13,6 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-
-logger = logging.getLogger(__name__)
 from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,9 +29,11 @@ from app.models.chat import (
     SessionRead,
 )
 from app.models.user import User
-from app.services.auth import get_current_user, get_optional_user
+from app.services.auth import get_optional_user
 from app.services.model_client import DeltaChunk, SourcesChunk, get_model_client
 from app.services.rag_service import get_rag_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -44,6 +44,25 @@ def _check_session_access(session: ChatSession | None, current_user: User | None
     if session.user_id is not None:
         if current_user is None or session.user_id != current_user.id:
             raise HTTPException(status_code=404, detail="Session not found")
+
+
+def _build_retrieval_query(history: list[dict], current: str, max_turns: int) -> str:
+    """
+    Fold the recent user turns into the RAG query so follow-up questions
+    ("a ile to kosztuje?") retrieve against the real topic, not just themselves.
+    """
+    if max_turns <= 1:
+        return current
+    user_turns = [
+        m["content"]
+        for m in history
+        if m.get("role") == "user" and isinstance(m.get("content"), str) and m["content"].strip()
+    ]
+    recent = user_turns[-max_turns:]
+    if not recent or recent[-1] != current:
+        recent.append(current)
+    query = "\n".join(recent).strip()
+    return query[:1000] or current
 
 
 def _make_title(content: str, max_len: int = 60) -> str:
@@ -87,9 +106,7 @@ async def get_messages(
     current_user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
-    session_result = await db.execute(
-        select(ChatSession).where(ChatSession.id == session_id)
-    )
+    session_result = await db.execute(select(ChatSession).where(ChatSession.id == session_id))
     _check_session_access(session_result.scalar_one_or_none(), current_user)
 
     result = await db.execute(
@@ -115,9 +132,7 @@ async def send_message(
     current_user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(ChatSession).where(ChatSession.id == session_id)
-    )
+    result = await db.execute(select(ChatSession).where(ChatSession.id == session_id))
     session = result.scalar_one_or_none()
     _check_session_access(session, current_user)
     needs_title = session.title is None
@@ -133,8 +148,7 @@ async def send_message(
         .limit(settings.history_limit)
     )
     messages_for_model = [
-        {"role": m.role, "content": m.content}
-        for m in reversed(history_result.scalars().all())
+        {"role": m.role, "content": m.content} for m in reversed(history_result.scalars().all())
     ]
 
     if payload.image is not None:
@@ -146,8 +160,11 @@ async def send_message(
             ],
         }
 
+    retrieval_query = _build_retrieval_query(
+        messages_for_model, payload.content, settings.rag_query_context_turns
+    )
     try:
-        rag_context, rag_sources = await get_rag_service().retrieve(payload.content)
+        rag_context, rag_sources = await get_rag_service().retrieve(retrieval_query)
     except Exception as rag_exc:
         logger.error("RAG retrieve failed, proceeding without context: %s", rag_exc, exc_info=True)
         rag_context, rag_sources = "", []
@@ -199,9 +216,7 @@ async def send_message(
             if needs_title:
                 session_values["title"] = _make_title(payload.content)
             await new_db.execute(
-                update(ChatSession)
-                .where(ChatSession.id == session_id)
-                .values(**session_values)
+                update(ChatSession).where(ChatSession.id == session_id).values(**session_values)
             )
             await new_db.commit()
             await new_db.refresh(assistant_msg)
@@ -222,9 +237,7 @@ async def delete_session(
     current_user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(ChatSession).where(ChatSession.id == session_id)
-    )
+    result = await db.execute(select(ChatSession).where(ChatSession.id == session_id))
     session = result.scalar_one_or_none()
     _check_session_access(session, current_user)
     await db.delete(session)
