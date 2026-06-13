@@ -14,17 +14,17 @@ from app.models.schemas import (
 from app.services.document_ai import (
     DocumentProcessor,
     EmbeddingService,
-    InMemoryRagStore,
     RerankerService,
     VisionLLMService,
 )
+from app.services.qdrant_store import QdrantRagStore
 
 router = APIRouter()
 
 document_processor = DocumentProcessor()
 embedding_service = EmbeddingService()
 reranker_service = RerankerService()
-rag_store = InMemoryRagStore(embedding_service, reranker_service)
+rag_store = QdrantRagStore(embedding_service, reranker_service)
 vision_service = VisionLLMService()
 
 
@@ -107,12 +107,18 @@ async def index_document_for_rag(file: UploadFile = File(...)):
         )
 
     source_id = file.filename or "document"
-    chunks, warnings = embedding_service.embed_document_title(source_id, document.text)
-    indexed_chunks = rag_store.index_chunks(chunks)
+    chunks, warnings = embedding_service.embed_chunks(
+        text=document.text,
+        source_id=source_id,
+        chunk_size=500,
+        overlap=50,
+    )
+    indexed_chunks = await rag_store.index_chunks(chunks)
+    total_chunks = await rag_store.get_total_chunks()
     return RagIndexResponse(
         source_id=source_id,
         indexed_chunks=indexed_chunks,
-        total_chunks=rag_store.total_chunks,
+        total_chunks=total_chunks,
         warnings=[*document.warnings, *warnings],
     )
 
@@ -122,7 +128,7 @@ async def ask_assistant(payload: RagAskRequest):
     if not payload.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
 
-    matches, search_warnings = rag_store.search(
+    matches, search_warnings = await rag_store.search(
         question=payload.question,
         top_k=payload.top_k,
         source_id=payload.source_id,
