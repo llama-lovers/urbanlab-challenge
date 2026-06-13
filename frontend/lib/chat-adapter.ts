@@ -66,11 +66,15 @@ export class UrbanLabAdapter implements ChatModelAdapter {
     const decoder = new TextDecoder()
     let buffer = ''
     let text = ''
+    let status = ''
     let sources: Source[] = []
 
-    const emit = () => ({
-      content: [{ type: 'text' as const, text: text + sourcesToMarkdown(sources) }],
-    })
+    // Until the answer starts streaming, surface the backend's progress hints
+    // ("Szukam w bazie wiedzy…" / "Generuję odpowiedź…") in the message bubble.
+    const emit = () => {
+      const body = text ? text + sourcesToMarkdown(sources) : status ? `_${status}_` : ''
+      return { content: [{ type: 'text' as const, text: body }] }
+    }
 
     while (true) {
       const { done, value } = await reader.read()
@@ -90,7 +94,10 @@ export class UrbanLabAdapter implements ChatModelAdapter {
         }
         if (!data) continue
 
-        if (event === 'delta') {
+        if (event === 'status') {
+          status = (JSON.parse(data) as { text: string }).text
+          yield emit()
+        } else if (event === 'delta') {
           text += (JSON.parse(data) as { text: string }).text
           yield emit()
         } else if (event === 'sources') {
