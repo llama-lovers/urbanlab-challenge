@@ -43,19 +43,30 @@ class RagService:
         if settings.rag_expand_to_page:
             matches = await self._store.expand_to_pages(matches)
 
-        # Every paragraph becomes its own numbered context block with its own
-        # source — so each akapit is traceable and nothing is left unsourced.
+        # Each paragraph is its own numbered context block tagged with its source,
+        # so the model can trace every akapit. The user-facing sources list, though,
+        # is de-duplicated to distinct pages — otherwise expanding one page into all
+        # its paragraphs floods the UI with the same source dozens of times.
         parts: list[str] = []
         sources: list[dict] = []
+        seen_sources: set[str] = set()
         for i, m in enumerate(matches, 1):
             title = m.metadata.get("title") or m.metadata.get("source_id") or "BIP Lublin"
             url = m.metadata.get("url") or ""
             label = url or title
             parts.append(f"[{i}] {label}\n{m.text}")
-            sources.append({"title": title, "url": url})
+            key = url or title
+            if key not in seen_sources:
+                seen_sources.add(key)
+                sources.append({"title": title, "url": url})
 
         context = "\n\n---\n\n".join(parts)
-        logger.info("RAG context built: %d paragraphs, %d chars", len(matches), len(context))
+        logger.info(
+            "RAG context built: %d paragraphs, %d distinct sources, %d chars",
+            len(matches),
+            len(sources),
+            len(context),
+        )
 
         return context, sources
 
