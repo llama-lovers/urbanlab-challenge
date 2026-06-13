@@ -109,6 +109,49 @@ async def test_chat_stream(auth_headers):
 
 
 @pytest.mark.asyncio
+async def test_session_title_auto_gen(auth_headers):
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", timeout=30
+    ) as client:
+        resp = await client.post("/api/chat/sessions", headers=auth_headers)
+        assert resp.status_code == 201
+        sid = resp.json()["id"]
+        assert resp.json()["title"] is None
+
+        try:
+            async with client.stream(
+                "POST",
+                f"/api/chat/sessions/{sid}/messages",
+                json={"content": "Jak załatwić dowód osobisty w Lublinie?"},
+                headers=auth_headers,
+            ) as resp:
+                assert resp.status_code == 200
+                async for _ in resp.aiter_lines():
+                    pass
+
+            resp = await client.get("/api/chat/sessions", headers=auth_headers)
+            session = next(s for s in resp.json() if s["id"] == sid)
+            assert session["title"] == "Jak załatwić dowód osobisty w Lublinie?"
+
+            # Second message must not overwrite the title
+            async with client.stream(
+                "POST",
+                f"/api/chat/sessions/{sid}/messages",
+                json={"content": "Drugie pytanie"},
+                headers=auth_headers,
+            ) as resp:
+                async for _ in resp.aiter_lines():
+                    pass
+
+            resp = await client.get("/api/chat/sessions", headers=auth_headers)
+            session = next(s for s in resp.json() if s["id"] == sid)
+            assert session["title"] == "Jak załatwić dowód osobisty w Lublinie?"
+
+        finally:
+            await client.delete(f"/api/chat/sessions/{sid}", headers=auth_headers)
+
+
+@pytest.mark.asyncio
 async def test_unauthenticated_requests():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         assert (await client.post("/api/chat/sessions")).status_code == 401

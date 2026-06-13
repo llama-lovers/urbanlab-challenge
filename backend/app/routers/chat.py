@@ -11,13 +11,14 @@ SSE event contract (POST /sessions/{id}/messages):
 import json
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import AsyncSessionLocal, get_db
+from app.limiter import limiter
 from app.models.chat import (
     ChatMessage,
     ChatRequest,
@@ -31,6 +32,14 @@ from app.services.auth import get_current_user
 from app.services.model_client import DeltaChunk, SourcesChunk, get_model_client
 
 router = APIRouter()
+
+
+def _make_title(content: str, max_len: int = 60) -> str:
+    content = content.strip()
+    if len(content) <= max_len:
+        return content
+    truncated = content[:max_len].rsplit(" ", 1)[0]
+    return truncated + "…"
 
 
 @router.post("/sessions", response_model=SessionRead, status_code=201)
@@ -88,7 +97,9 @@ async def get_messages(
         "`delta` {text}, `sources` [{title,url}…], `done` {message_id}, `error` {detail}."
     ),
 )
+@limiter.limit("20/minute")
 async def send_message(
+    request: Request,
     session_id: uuid.UUID,
     payload: ChatRequest,
     current_user: User = Depends(get_current_user),
@@ -100,8 +111,10 @@ async def send_message(
             ChatSession.user_id == current_user.id,
         )
     )
-    if result.scalar_one_or_none() is None:
+    session = result.scalar_one_or_none()
+    if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    needs_title = session.title is None
 
     user_msg = ChatMessage(session_id=session_id, role="user", content=payload.content)
     db.add(user_msg)
@@ -126,6 +139,8 @@ async def send_message(
 
         try:
             async for chunk in model_client.stream(messages_for_model, str(session_id)):
+                if await request.is_disconnected():
+                    return
                 if isinstance(chunk, DeltaChunk):
                     full_text += chunk.text
                     yield f"event: delta\ndata: {json.dumps({'text': chunk.text})}\n\n"
@@ -147,10 +162,13 @@ async def send_message(
                 sources=final_sources,
             )
             new_db.add(assistant_msg)
+            session_values: dict = {"updated_at": func.now()}
+            if needs_title:
+                session_values["title"] = _make_title(payload.content)
             await new_db.execute(
                 update(ChatSession)
                 .where(ChatSession.id == session_id)
-                .values(updated_at=func.now())
+                .values(**session_values)
             )
             await new_db.commit()
             await new_db.refresh(assistant_msg)
