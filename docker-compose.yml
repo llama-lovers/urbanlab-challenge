@@ -125,6 +125,8 @@ services:
       VISION_LLM_BASE_URL: ${VISION_LLM_BASE_URL:-http://ollama-glm-ocr:11434}
       VISION_LLM_API_KEY: ${VISION_LLM_API_KEY:-}
       VISION_LLM_MODEL: ${VISION_LLM_MODEL:-glm-ocr}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["http://10.8.47.10","http://10.8.47.10:3000","http://localhost:3000","http://localhost:5173"]}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
     volumes:
       - ./backend:/app
     depends_on:
