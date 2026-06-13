@@ -8,11 +8,12 @@ SSE event contract (POST /sessions/{id}/messages):
     event: error    data: {"detail": "..."}         on failure
 """
 
+import base64
 import json
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
 logger = logging.getLogger(__name__)
 from fastapi.responses import StreamingResponse
@@ -24,7 +25,6 @@ from app.database import AsyncSessionLocal, get_db
 from app.limiter import limiter
 from app.models.chat import (
     ChatMessage,
-    ChatRequest,
     ChatSession,
     MessageRead,
     SessionListItem,
@@ -111,7 +111,8 @@ async def get_messages(
 async def send_message(
     request: Request,
     session_id: uuid.UUID,
-    payload: ChatRequest,
+    content: str = Form(...),
+    image: UploadFile | None = File(None),
     current_user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -122,7 +123,19 @@ async def send_message(
     _check_session_access(session, current_user)
     needs_title = session.title is None
 
-    user_msg = ChatMessage(session_id=session_id, role="user", content=payload.content)
+    # Validate and read image before writing the user message so we fail fast.
+    image_data_url: str | None = None
+    if image is not None:
+        mime = image.content_type or ""
+        if not mime.startswith("image/"):
+            raise HTTPException(status_code=422, detail="Uploaded file must be an image.")
+        image_bytes = await image.read()
+        if not image_bytes:
+            raise HTTPException(status_code=422, detail="Uploaded image is empty.")
+        b64 = base64.b64encode(image_bytes).decode("ascii")
+        image_data_url = f"data:{mime};base64,{b64}"
+
+    user_msg = ChatMessage(session_id=session_id, role="user", content=content)
     db.add(user_msg)
     await db.commit()
 
@@ -137,8 +150,18 @@ async def send_message(
         for m in reversed(history_result.scalars().all())
     ]
 
+    # Replace the current user message with multimodal format when an image is attached.
+    if image_data_url is not None:
+        messages_for_model[-1] = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": content},
+                {"type": "image_url", "image_url": {"url": image_data_url}},
+            ],
+        }
+
     try:
-        rag_context, rag_sources = await get_rag_service().retrieve(payload.content)
+        rag_context, rag_sources = await get_rag_service().retrieve(content)
     except Exception as rag_exc:
         logger.error("RAG retrieve failed, proceeding without context: %s", rag_exc, exc_info=True)
         rag_context, rag_sources = "", []
@@ -190,7 +213,7 @@ async def send_message(
             new_db.add(assistant_msg)
             session_values: dict = {"updated_at": func.now()}
             if needs_title:
-                session_values["title"] = _make_title(payload.content)
+                session_values["title"] = _make_title(content)
             await new_db.execute(
                 update(ChatSession)
                 .where(ChatSession.id == session_id)
